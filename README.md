@@ -61,11 +61,29 @@
 - `url` 模式若下载失败、`b64` 解析失败、接口 4xx/5xx、超时，统一降到 `error_reply`；
 - one-api / new-api / 自建 SD 兼容层只要实现了 `/images/generations` 就能用。
 
+## 面板
+
+页面在 `views/dashboard/`，AstrBot 会自动扫描并通过 iframe 加载：
+
+| 接口 | 方法 | 用途 |
+|---|---|---|
+| `/Astrbot_Amo_Image/status` | GET | 后端、模型、今日用量、累计 |
+| `/Astrbot_Amo_Image/history` | GET | 最近 40 次生图 |
+| `/Astrbot_Amo_Image/config` | GET | 当前配置（密钥只回掩码） |
+| `/Astrbot_Amo_Image/test` | POST | 试画，返回 `data:image/png;base64` |
+
 ## 测试
 
 ```bash
-python3 -m pytest -q     # 24 passed，不连网、不依赖 AstrBot
+python3 -m pytest -q     # 29 passed，不连网、不依赖 AstrBot
 ```
+
+## 0.4.4 可视化面板
+
+- AstrBot WebUI → 插件 → 我想和你度日常 → 「面板」；
+- 看后端状态、今日用量、累计次数、最近 40 次记录；
+- **试画一张**：面板里直接出图预览，不占聊天额度；
+- `api_key` 只显示掩码，面板拿不到完整密钥。
 
 ## 0.4.2 改名与图标
 
@@ -76,4 +94,4 @@ python3 -m pytest -q     # 24 passed，不连网、不依赖 AstrBot
 ## 版本号规则
 
 和另外两个插件一致：`metadata.yaml` / `CHANGELOG.md` / `README.md` / `main.py` 四处一致；
-尾号取偶数，版本号里不出现数字 `1` 和 `7`。当前 **0.4.2**。
+尾号取偶数，版本号里不出现数字 `1` 和 `7`。当前 **0.4.4**。

@@ -22,7 +22,7 @@ def make_plugin(**cfg):
         "daily_limit": 0,
     }
     conf.update(cfg)
-    return main.AmoImagePlugin(context=object(), config=conf)
+    return main.AmoImagePlugin(context=astrbot_stub._Context(), config=conf)
 
 
 class FakeMem:
@@ -185,6 +185,48 @@ def test_short_prompt_asks_for_detail():
     p = make_plugin()
     out = collect(p.on_message(_Event("画一张", private=True)))
     assert out and out[0].kind == "plain" and "想画什么" in out[0].payload
+
+
+def test_web_routes_registered():
+    p = make_plugin()
+    routes = [item["route"] for item in p.context.web_apis]
+    assert "/Astrbot_Amo_Image/status" in routes
+    assert "/Astrbot_Amo_Image/history" in routes
+    assert "/Astrbot_Amo_Image/test" in routes
+    assert "/Astrbot_Amo_Image/config" in routes
+
+
+def test_api_status_shape_and_masked_key():
+    p = make_plugin(api_key="sk-abcdefghijklmnop")
+    data = collect(p.api_status())["data"]
+    assert data["name"] == "Astrbot_Amo_Image"
+    assert data["enabled"] is True
+    assert data["api_key_masked"] == "sk-a…mnop"
+    assert "api_key" not in data
+
+
+def test_api_history_records_draw_result():
+    p = make_plugin()
+    p._generate = lambda prompt: _async(b"12345")
+    collect(p._draw(_Event("画一张猫"), "猫"))
+    items = collect(p.api_history())["data"]["items"]
+    assert len(items) == 1
+    assert items[0]["ok"] is True and items[0]["bytes"] == 5
+
+
+def test_api_test_returns_data_uri():
+    p = make_plugin()
+    p._generate = lambda prompt: _async(b"PNG")
+    out = collect(p.api_test())
+    assert out["code"] == 0
+    assert out["data"]["image"].startswith("data:image/png;base64,")
+
+
+def test_api_test_reports_failure():
+    p = make_plugin()
+    p._generate = lambda prompt: _async_raise(RuntimeError("boom"))
+    out = collect(p.api_test())
+    assert out["code"] == 1 and "boom" in out["message"]
 
 
 def test_command_status_reports_backend():

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.4
+
+### 可视化面板
+
+- `views/dashboard/`：AstrBot WebUI 里点插件卡片就能打开「面板」；
+- 后端状态：开关、地址、模型、尺寸、密钥掩码、今日用量、累计次数、运行时长；
+- 试画：面板里填提示词直接出一张，返回 `data:image/png;base64` 即时预览，不占聊天额度；
+- 最近 40 次记录：时间、提示词、成败、耗时、字节；
+- 深浅色跟随按钮切换，页面每 15 秒刷新一次。
+
+### 后端接口
+
+- `GET /Astrbot_Amo_Image/status`、`GET /history`、`GET /config`、`POST /test`；
+- `api_key` 只回掩码，面板拿不到完整密钥；
+- 6.8.0 的 `views/` 扫描机制：`views/<name>/index.html` 自动被 AstrBot 加载，脚本走 `window.AstrbotPluginView` bridge。
+
+测试 29 passed（含 5 条面板接口用例）。
+
 ## 0.4.2
 
 - 显示名改为 **我想和你度日常**（插件 ID `Astrbot_Amo_Image` 不变，配置与数据不受影响）；

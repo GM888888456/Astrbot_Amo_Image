@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4f4f6" />
+  <title>我想和你度日常</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand"><span class="dot"></span><span>我想和你度日常</span></div>
+      <button class="icon-btn" id="theme" title="切换深浅色">◐</button>
+    </header>
+
+    <section class="card" id="statusCard">
+      <div class="card-title">
+        <span>后端</span>
+        <span class="pill" id="enablePill">…</span>
+      </div>
+      <dl class="kv">
+        <dt>地址</dt><dd id="apiBase">—</dd>
+        <dt>模型</dt><dd id="model">—</dd>
+        <dt>尺寸</dt><dd id="size">—</dd>
+        <dt>密钥</dt><dd id="keyMasked">—</dd>
+        <dt>今日已画</dt><dd id="usedToday">—</dd>
+        <dt>累计</dt><dd id="callsTotal">—</dd>
+      </dl>
+      <div class="meta" id="statusMeta">加载中…</div>
+    </section>
+
+    <section class="card">
+      <div class="card-title"><span>试画一张</span></div>
+      <textarea id="prompt" rows="2" placeholder="例如：下雨天的便利店门口，她撑着伞回头">窗边的猫，午后阳光</textarea>
+      <div class="row">
+        <button class="btn" id="draw">画</button>
+        <span class="hint" id="drawHint">面板调用不算聊天额度</span>
+      </div>
+      <div class="preview" id="preview" hidden>
+        <img id="previewImg" alt="预览" />
+        <div class="meta" id="previewMeta"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">
+        <span>最近画的</span>
+        <button class="link" id="refresh">刷新</button>
+      </div>
+      <ul class="list" id="history">
+        <li class="empty">还没有记录</li>
+      </ul>
+    </section>
+
+    <footer class="foot">Astrbot_Amo_Image · 反馈 QQ 群 1055679275</footer>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

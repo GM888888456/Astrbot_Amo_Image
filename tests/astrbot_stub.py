@@ -53,6 +53,27 @@ class _Image:
         return _Image("base64://" + data)
 
 
+class _Context:
+    """最小 Context：记录注册的面板路由，供测试断言。"""
+
+    def __init__(self, stars=None):
+        self._stars = stars or {}
+        self.web_apis = []
+
+    def register_web_api(self, route, handler, methods=None, desc=""):
+        # 兼容两种签名：companion 风格 (route, handler, methods, desc)
+        if callable(handler):
+            self.web_apis.append({"route": route, "methods": list(methods or []), "desc": desc})
+        else:
+            self.web_apis.append({"route": route, "methods": list(handler or []), "desc": desc})
+
+    def get_registered_star(self, name):
+        return _Meta(self._stars[name]) if name in self._stars else None
+
+    def get_all_stars(self):
+        return [_Meta(v) for v in self._stars.values()]
+
+
 class _Meta:
     def __init__(self, star):
         self.star_cls = star
@@ -127,16 +148,6 @@ def _install_stub():
     event_mod.AstrMessageEvent = _Event
 
     star_mod = types.ModuleType("astrbot.api.star")
-
-    class _Context:
-        def __init__(self, stars=None):
-            self._stars = stars or {}
-
-        def get_registered_star(self, name):
-            return _Meta(self._stars[name]) if name in self._stars else None
-
-        def get_all_stars(self):
-            return [_Meta(v) for v in self._stars.values()]
 
     class _Star:
         def __init__(self, context=None):

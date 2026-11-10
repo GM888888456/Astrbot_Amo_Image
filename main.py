@@ -21,6 +21,7 @@ import os
 import re
 import tempfile
 import time
+from collections import deque
 
 from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
@@ -31,13 +32,18 @@ try:  # AstrBot 4.x
 except Exception:  # pragma: no cover - 老版本路径
     from astrbot.core.message.components import Image, Plain, Reply  # type: ignore
 
+try:  # 面板后端：AstrBot 4.x 的插件 Web API
+    from astrbot.api.web import error_response, json_response, request as web_request
+except Exception:  # pragma: no cover - 老版本没有该模块
+    error_response = json_response = web_request = None
+
 try:
     import aiohttp
 except Exception:  # pragma: no cover - 没装 aiohttp 时退回线程 + urllib
     aiohttp = None  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.4.2"
+PLUGIN_VERSION = "0.4.4"
 
 DATA_PLUGIN_NAMES = (
     "Astr_Amo_data",
@@ -123,7 +129,11 @@ class AmoImagePlugin(Star):
         self.config = config or {}
         self._last_call = {}   # uid -> 上次生图时间
         self._daily = {}       # uid -> [日期字符串, 次数]
+        self._history = deque(maxlen=40)   # 最近几次生图（面板用）
+        self._calls_total = 0
+        self._started_at = time.time()
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        self._register_web_apis()
 
     # ---------- 配置 ----------
 
@@ -348,6 +358,142 @@ class AmoImagePlugin(Star):
             return await self._download(value)
         return value
 
+    # ---------- 面板 Web API ----------
+
+    def _register_web_apis(self):
+        """把面板接口挂到 /Astrbot_Amo_Image/*；注册失败只记日志，不影响生图。"""
+        routes = [
+            ("/status", self.api_status, ["GET"]),
+            ("/history", self.api_history, ["GET"]),
+            ("/config", self.api_config, ["GET"]),
+            ("/test", self.api_test, ["POST"]),
+        ]
+        for path, handler, methods in routes:
+            try:
+                self.context.register_web_api("/" + PLUGIN_NAME + path, handler, methods, path)
+            except TypeError:
+                try:
+                    self.context.register_web_api("/" + PLUGIN_NAME + path, methods, path, handler)
+                except Exception as exc:
+                    logger.warning("[amo_image] 面板接口 %s 兼容注册失败: %s" % (path, exc))
+            except Exception as exc:
+                logger.warning("[amo_image] 面板接口 %s 注册失败: %s" % (path, exc))
+
+    @staticmethod
+    def _json(payload):
+        if json_response is not None:
+            try:
+                return json_response(payload)
+            except Exception:
+                pass
+        return payload
+
+    @staticmethod
+    def _fail(message):
+        if error_response is not None:
+            try:
+                return error_response(message)
+            except Exception:
+                pass
+        return {"code": 1, "message": message}
+
+    def _mask_key(self) -> str:
+        key = str(self._cfg("api_key", "") or "")
+        if not key:
+            return ""
+        if len(key) <= 10:
+            return "已配置"
+        return key[:4] + "…" + key[-4:]
+
+    def _today_used(self) -> int:
+        today = time.strftime("%Y-%m-%d")
+        total = 0
+        for record in self._daily.values():
+            if isinstance(record, list) and len(record) == 2 and record[0] == today:
+                total += int(record[1])
+        return total
+
+    async def api_status(self):
+        return self._json({
+            "code": 0,
+            "data": {
+                "name": PLUGIN_NAME,
+                "version": PLUGIN_VERSION,
+                "enabled": self._bool("enable", True),
+                "api_base": str(self._cfg("api_base", "") or ""),
+                "api_key_masked": self._mask_key(),
+                "model": str(self._cfg("model", "") or ""),
+                "size": str(self._cfg("size", "") or ""),
+                "allow_private": self._bool("allow_private", True),
+                "allow_group": self._bool("allow_group", True),
+                "cooldown_seconds": self._int("cooldown_seconds", 30),
+                "daily_limit": self._int("daily_limit", 20),
+                "users_today": self._today_used(),
+                "calls_total": self._calls_total,
+                "history_size": len(self._history),
+                "uptime_seconds": int(time.time() - self._started_at),
+            },
+        })
+
+    async def api_history(self):
+        return self._json({"code": 0, "data": {"items": list(self._history)}})
+
+    async def api_config(self):
+        keys = [
+            "enable", "api_base", "model", "size", "n", "quality", "style", "timeout",
+            "character_appearance", "use_memory_context", "memory_context_limit",
+            "allow_private", "allow_group", "require_at_in_group", "quote_in_group",
+            "keywords", "cooldown_seconds", "daily_limit", "reply_prefix", "error_reply",
+        ]
+        data = {k: self._cfg(k, None) for k in keys}
+        data["api_key"] = self._mask_key()
+        return self._json({"code": 0, "data": data})
+
+    async def api_test(self):
+        """面板里试画一张：返回 data:image/png;base64，前端直接 <img>。"""
+        payload = {}
+        if web_request is not None:
+            try:
+                payload = await web_request.json(default={})
+            except Exception:
+                payload = {}
+        prompt = str((payload or {}).get("prompt") or "").strip() or "窗边的猫，午后阳光"
+        final_prompt = build_prompt(self._cfg("character_appearance", ""), prompt, [])
+        started = time.time()
+        try:
+            data = await self._generate(final_prompt)
+        except Exception as exc:
+            self._record("panel", prompt, False, int((time.time() - started) * 1000), 0)
+            return self._fail("生图失败：%s" % exc)
+        if not data:
+            self._record("panel", prompt, False, int((time.time() - started) * 1000), 0)
+            return self._fail("后端返回空")
+        self._record("panel", prompt, True, int((time.time() - started) * 1000), len(data))
+        return self._json({
+            "code": 0,
+            "data": {
+                "image": "data:image/png;base64," + base64.b64encode(data).decode(),
+                "bytes": len(data),
+                "ms": int((time.time() - started) * 1000),
+                "prompt": final_prompt,
+            },
+        })
+
+    def _record(self, uid, prompt, ok, ms, size):
+        self._calls_total += 1
+        try:
+            self._history.append({
+                "ts": int(time.time()),
+                "time": time.strftime("%m-%d %H:%M:%S"),
+                "uid": str(uid or ""),
+                "prompt": str(prompt or "")[:80],
+                "ok": bool(ok),
+                "ms": int(ms),
+                "bytes": int(size),
+            })
+        except Exception:
+            pass
+
     # ---------- 发送 ----------
 
     def _result(self, event, data: bytes, prefix: str = ""):
@@ -411,16 +557,20 @@ class AmoImagePlugin(Star):
         ctx = await self._context_lines(umo, uid)
         final_prompt = build_prompt(self._cfg("character_appearance", ""), prompt, ctx)
         self._mark_call(uid)
+        started = time.time()
         try:
             data = await self._generate(final_prompt)
         except Exception as exc:
             logger.warning("[amo_image] 生图失败: %s" % exc)
+            self._record(uid, prompt, False, int((time.time() - started) * 1000), 0)
             yield event.plain_result(str(self._cfg("error_reply", "画不出来，等会儿再试试")))
             return
         if not data:
             logger.warning("[amo_image] 生图返回空")
+            self._record(uid, prompt, False, int((time.time() - started) * 1000), 0)
             yield event.plain_result(str(self._cfg("error_reply", "画不出来，等会儿再试试")))
             return
+        self._record(uid, prompt, True, int((time.time() - started) * 1000), len(data))
         yield self._result(event, data, str(self._cfg("reply_prefix", "") or ""))
 
     # ---------- 命令 ----------
