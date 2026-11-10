@@ -1,4 +1,6 @@
-# 我想永远陪伴你·生图（Astrbot_Amo_Image）
+# 我想和你度日常（Astrbot_Amo_Image）
+
+<img src="logo.png" width="120" alt="图标">
 
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 >
@@ -65,7 +67,13 @@
 python3 -m pytest -q     # 24 passed，不连网、不依赖 AstrBot
 ```
 
+## 0.4.2 改名与图标
+
+- 显示名从「我想永远陪伴你·生图」改为 **我想和你度日常**，插件 ID 仍是 `Astrbot_Amo_Image`；
+- 图标换成陪伴插件同款 `logo.png`，三个插件站在一起是一套；
+- 功能不变，仍是 24 passed。
+
 ## 版本号规则
 
 和另外两个插件一致：`metadata.yaml` / `CHANGELOG.md` / `README.md` / `main.py` 四处一致；
-尾号取偶数，版本号里不出现数字 `1` 和 `7`。当前 **0.4.0**。
+尾号取偶数，版本号里不出现数字 `1` 和 `7`。当前 **0.4.2**。

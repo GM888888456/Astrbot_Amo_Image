@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""我想永远陪伴你·生图（Astrbot_Amo_Image）。
+"""我想和你度日常（Astrbot_Amo_Image）：生图联动。
 
 给「我想永远陪伴你」（Astrbot_Amo_forever）和「我想永远记住你」（Astr_Amo_data）
 配套的第三块：**只负责画图**。
@@ -37,7 +37,7 @@ except Exception:  # pragma: no cover - 没装 aiohttp 时退回线程 + urllib
     aiohttp = None  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.4.0"
+PLUGIN_VERSION = "0.4.2"
 
 DATA_PLUGIN_NAMES = (
     "Astr_Amo_data",
