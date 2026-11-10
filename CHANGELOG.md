@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.8
+
+- 图标换成品牌图：两个人剪影，心口各一个手写 `Amo`（和陪伴、数据同一张）；
+
 ## 0.4.6
 
 - `repo` 统一成主仓库规范写法 `https://github.com/GM888888456/Astrbot_Amo_Image/`；
