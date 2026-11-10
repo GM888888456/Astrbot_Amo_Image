@@ -67,6 +67,27 @@ def check_rules(version):
     return problems
 
 
+REPO_OWNER = "GM888888456"
+
+
+def repo_problem():
+    """仓库地址只认主仓库的规范写法：https://github.com/<owner>/<repo>/"""
+    text = read("metadata.yaml")
+    match = re.search(r"^repo:\s*(\S+)\s*$", text, re.M)
+    if not match:
+        return "metadata.yaml 缺少 repo 字段"
+    url = match.group(1)
+    pattern = r"^https://github\.com/%s/([A-Za-z0-9_.-]+)/$" % REPO_OWNER
+    parsed = re.match(pattern, url)
+    if not parsed:
+        return ("repo 必须写成 https://github.com/%s/<仓库名>/（结尾带斜杠、指向主仓库），现在是 %s"
+                % (REPO_OWNER, url))
+    name = parsed.group(1)
+    if name.endswith("_ui") or name.lower().endswith("_test"):
+        return "repo 指向了测试仓库 %s，必须指向主仓库" % name
+    return ""
+
+
 def main():
     versions = {
         "metadata.yaml": metadata_version(),
@@ -91,7 +112,12 @@ def main():
         for item in problems:
             print("  - " + item)
         return 1
+    repo_issue = repo_problem()
+    if repo_issue:
+        print(repo_issue)
+        return 1
     print("版本号校验通过：%s" % version)
+    print("仓库地址规范：通过")
     return 0
 
 

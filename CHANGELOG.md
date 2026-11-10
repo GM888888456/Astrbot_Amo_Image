@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.6
+
+- `repo` 统一成主仓库规范写法 `https://github.com/GM888888456/Astrbot_Amo_Image/`；
+- 补 `tools/check_version.py` 的仓库地址校验（格式不对直接失败）。
+
 ## 0.4.4
 
 ### 可视化面板
