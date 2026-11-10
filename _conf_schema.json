@@ -1,0 +1,135 @@
+{
+  "enable": {
+    "type": "bool",
+    "description": "启用生图",
+    "default": true,
+    "hint": "总开关。关掉后任何触发词和 /amoimage 都不响应。"
+  },
+  "api_base": {
+    "type": "string",
+    "description": "生图后端地址",
+    "default": "https://api.openai.com/v1",
+    "hint": "OpenAI 兼容接口的根地址，插件会请求 {api_base}/images/generations。自建（one-api / new-api / SD WebUI 兼容层）填自己的地址，不要带结尾斜杠。"
+  },
+  "api_key": {
+    "type": "string",
+    "description": "生图后端密钥",
+    "default": "",
+    "hint": "只存在本机配置里，不会写进日志。留空则只用不需要鉴权的自建后端。"
+  },
+  "model": {
+    "type": "string",
+    "description": "生图模型",
+    "default": "gpt-image-1",
+    "hint": "后端支持的模型名，例如 gpt-image-1 / dall-e-3 / flux-schnell / sd-turbo。"
+  },
+  "size": {
+    "type": "string",
+    "description": "图片尺寸",
+    "default": "1024x1024",
+    "hint": "常见值 1024x1024 / 1024x1536 / 1536x1024。不同后端支持范围不同，报错时先查这里。"
+  },
+  "n": {
+    "type": "int",
+    "description": "每次张数",
+    "default": 1,
+    "hint": "建议 1，多张会明显变慢也更费额度。"
+  },
+  "quality": {
+    "type": "string",
+    "description": "质量",
+    "default": "",
+    "hint": "可选 auto / low / medium / high，留空就不发这个字段（兼容不支持的后端）。"
+  },
+  "style": {
+    "type": "string",
+    "description": "风格",
+    "default": "",
+    "hint": "可选 vivid / natural，留空就不发这个字段。"
+  },
+  "timeout": {
+    "type": "float",
+    "description": "超时秒数",
+    "default": 90,
+    "hint": "生图比聊天慢，建议不低于 60；超时会回一句人设化的失败话术。"
+  },
+  "character_appearance": {
+    "type": "string",
+    "description": "人物外观",
+    "default": "",
+    "hint": "拼在提示词最前面，保证每次画出来是同一个人。例如「银灰长发、琥珀色眼睛、米色开衫」。留空只画提示词本身。"
+  },
+  "use_memory_context": {
+    "type": "bool",
+    "description": "接记忆上下文",
+    "default": true,
+    "hint": "打开后会用数据插件（Astr_Amo_data）最近的对话补提示词，让画面接得上剧情；数据插件没装或报错就静默跳过。"
+  },
+  "memory_context_limit": {
+    "type": "int",
+    "description": "上下文条数",
+    "default": 6,
+    "hint": "取最近几条对话做画面参考，太多会把提示词挤爆。"
+  },
+  "allow_private": {
+    "type": "bool",
+    "description": "私聊可用",
+    "default": true,
+    "hint": "关掉后私聊不响应生图。"
+  },
+  "allow_group": {
+    "type": "bool",
+    "description": "群聊可用",
+    "default": true,
+    "hint": "关掉后群里不响应生图。"
+  },
+  "require_at_in_group": {
+    "type": "bool",
+    "description": "群里必须 @ 才响应",
+    "default": false,
+    "hint": "打开后群里只有 @机器人 才生图，避免刷屏。"
+  },
+  "quote_in_group": {
+    "type": "bool",
+    "description": "群里引用原消息",
+    "default": true,
+    "hint": "群里发图时引用触发它的那条消息，方便对上是在画什么；私聊永远不引用。"
+  },
+  "keywords": {
+    "type": "list",
+    "description": "触发词",
+    "default": [
+      "画一张",
+      "画个",
+      "帮我画",
+      "生成图片",
+      "来张图",
+      "画张"
+    ],
+    "hint": "消息里出现这些词就尝试生图；后面跟的内容当作提示词。"
+  },
+  "cooldown_seconds": {
+    "type": "int",
+    "description": "冷却秒数",
+    "default": 30,
+    "hint": "同一个人两次生图之间的最小间隔，0 表示不限制。"
+  },
+  "daily_limit": {
+    "type": "int",
+    "description": "每人每天次数",
+    "default": 20,
+    "hint": "按自然日算，0 表示不限。超出会回一句温和的拒绝。"
+  },
+  "reply_prefix": {
+    "type": "string",
+    "description": "发送前缀",
+    "default": "",
+    "hint": "发图前带一句话，例如「画好啦」。留空就只发图。"
+  },
+  "error_reply": {
+    "type": "string",
+    "description": "失败话术",
+    "default": "画不出来，等会儿再试试",
+    "hint": "后端报错、超时、返回空时回这一句，不抛异常。"
+  }
+}
