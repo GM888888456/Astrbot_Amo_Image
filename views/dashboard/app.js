@@ -1,16 +1,37 @@
 const bridge = window.AstrBotPluginView || window.AstrBotPluginPage;
 
 const $ = (id) => document.getElementById(id);
+
+const TEXT_FIELDS = [
+  "api_base", "model", "size", "aspect_ratio", "quality",
+  "custom_url", "custom_body", "custom_response_path",
+  "character_appearance", "character_persona", "character_hairstyle",
+  "reply_prefix", "blocked_reply", "negative_prompt",
+];
+const NUMBER_FIELDS = [
+  "n", "outfit_change_cooldown_minutes", "cooldown_seconds",
+  "private_daily_limit", "group_daily_limit",
+];
+const CHECK_FIELDS = [
+  "chat_modalities", "lock_scene_to_schedule", "enable", "safe_mode",
+  "allow_private", "allow_group", "require_at_in_group", "quote_in_group",
+];
+
 const els = {
   theme: $("theme"),
   enablePill: $("enablePill"),
+  providerName: $("providerName"),
   apiBase: $("apiBase"),
-  model: $("model"),
-  size: $("size"),
+  modelName: $("modelName"),
+  sizeText: $("sizeText"),
   keyMasked: $("keyMasked"),
   usedToday: $("usedToday"),
   callsTotal: $("callsTotal"),
   statusMeta: $("statusMeta"),
+  preset: $("preset"),
+  presetHint: $("presetHint"),
+  save: $("save"),
+  saveHint: $("saveHint"),
   prompt: $("prompt"),
   draw: $("draw"),
   drawHint: $("drawHint"),
@@ -19,7 +40,10 @@ const els = {
   previewMeta: $("previewMeta"),
   history: $("history"),
   refresh: $("refresh"),
+  customBlock: $("customBlock"),
 };
+
+let presets = [];
 
 function setTheme(mode) {
   document.documentElement.dataset.theme = mode;
@@ -59,13 +83,34 @@ async function post(path, body) {
   return bridge.apiPost(path, body || {});
 }
 
+function showTab(name) {
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.classList.toggle("on", tab.dataset.tab === name);
+  });
+  document.querySelectorAll(".pane").forEach((pane) => {
+    pane.hidden = pane.id !== "pane-" + name;
+  });
+  if (name === "config") loadConfig();
+}
+
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => showTab(tab.dataset.tab));
+});
+
+function syncCustomBlock() {
+  els.customBlock.hidden = $("provider").value !== "custom";
+}
+
+$("provider").addEventListener("change", syncCustomBlock);
+
 function renderStatus(data) {
   const on = !!data.enabled;
   els.enablePill.textContent = on ? "已启用" : "已关闭";
   els.enablePill.className = "pill" + (on ? "" : " off");
+  els.providerName.textContent = data.provider || "openai";
   els.apiBase.textContent = data.api_base || "未配置";
-  els.model.textContent = data.model || "—";
-  els.size.textContent = data.size || "—";
+  els.modelName.textContent = data.model || "—";
+  els.sizeText.textContent = data.size || "—";
   els.keyMasked.textContent = data.api_key_masked || "未配置";
   els.usedToday.textContent = String(data.users_today ?? 0);
   els.callsTotal.textContent = String(data.calls_total ?? 0);
@@ -106,6 +151,102 @@ async function refresh() {
   }
 }
 
+async function loadPresets() {
+  try {
+    const result = await get("presets");
+    presets = (result && result.data && result.data.items) || [];
+  } catch (_) {
+    presets = [];
+  }
+  els.preset.innerHTML = '<option value="">手动填写</option>' +
+    presets.map((item, index) =>
+      '<option value="' + index + '">' + escapeHtml(item.name || item.id) + "</option>").join("");
+}
+
+els.preset.addEventListener("change", () => {
+  const item = presets[Number(els.preset.value)];
+  if (!item) return;
+  $("provider").value = item.provider || "openai";
+  if (item.api_base) $("api_base").value = item.api_base;
+  if (item.model) $("model").value = item.model;
+  syncCustomBlock();
+  els.presetHint.textContent = "已填入 " + (item.name || item.id) + "，密钥要自己填";
+});
+
+async function loadConfig() {
+  try {
+    const result = await get("config");
+    const data = (result && result.data) || {};
+    TEXT_FIELDS.forEach((key) => {
+      const el = $(key);
+      if (el && data[key] != null) el.value = String(data[key]);
+    });
+    NUMBER_FIELDS.forEach((key) => {
+      const el = $(key);
+      if (el && data[key] != null) el.value = String(data[key]);
+    });
+    CHECK_FIELDS.forEach((key) => {
+      const el = $(key);
+      if (el) el.checked = !!data[key];
+    });
+    if (data.provider) $("provider").value = data.provider;
+    if (data.character_gender) $("character_gender").value = data.character_gender;
+    const outfits = data.character_outfits;
+    $("character_outfits").value = Array.isArray(outfits) ? outfits.join("\n") : (outfits || "");
+    $("api_key").value = "";
+    $("api_key").placeholder = data.api_key_masked && data.api_key_masked !== "未配置"
+      ? "已配置 " + data.api_key_masked + "（留空不改）"
+      : "还没配置";
+    syncCustomBlock();
+  } catch (err) {
+    els.saveHint.textContent = "读取配置失败：" + String(err.message || err);
+  }
+}
+
+function collectConfig() {
+  const payload = {};
+  TEXT_FIELDS.forEach((key) => {
+    const el = $(key);
+    if (el) payload[key] = el.value;
+  });
+  NUMBER_FIELDS.forEach((key) => {
+    const el = $(key);
+    if (el) payload[key] = Number(el.value || 0);
+  });
+  CHECK_FIELDS.forEach((key) => {
+    const el = $(key);
+    if (el) payload[key] = !!el.checked;
+  });
+  payload.provider = $("provider").value;
+  payload.character_gender = $("character_gender").value;
+  payload.character_outfits = $("character_outfits").value
+    .split("\n").map((line) => line.trim()).filter(Boolean);
+  const key = $("api_key").value.trim();
+  if (key) payload.api_key = key;
+  return payload;
+}
+
+els.save.addEventListener("click", async () => {
+  els.save.disabled = true;
+  els.saveHint.textContent = "保存中…";
+  try {
+    const result = await post("config/save", collectConfig());
+    if (result && result.code === 0) {
+      const saved = result.data && result.data.saved;
+      els.saveHint.textContent = saved ? "已保存并写回配置" : "已生效（当前配置对象不支持落盘）";
+      $("api_key").value = "";
+      await refresh();
+      await loadConfig();
+    } else {
+      els.saveHint.textContent = (result && (result.message || result.msg)) || "保存失败";
+    }
+  } catch (err) {
+    els.saveHint.textContent = String(err.message || err);
+  } finally {
+    els.save.disabled = false;
+  }
+});
+
 els.draw.addEventListener("click", async () => {
   const prompt = (els.prompt.value || "").trim();
   if (!prompt) { els.drawHint.textContent = "先写点什么"; return; }
@@ -132,5 +273,6 @@ els.draw.addEventListener("click", async () => {
 
 els.refresh.addEventListener("click", refresh);
 
+loadPresets();
 refresh();
 setInterval(refresh, 15000);

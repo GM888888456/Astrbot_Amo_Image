@@ -9,7 +9,7 @@
 给 Amo 做生图联动的第三个插件：聊天里说一句「画一张……」，她按人设把画面画出来。
 它只负责画图，不参与聊天判定、不改 AstrBot 核心链路。
 
-## 0.11.0 内容边界与群聊限额
+## 0.12.0 多后端与配置面板
 
 - 发型固定（`character_hairstyle`）；服装按天固定（`character_outfits`，日程里换衣服才换套）；
 - 换装有冷却（`outfit_change_cooldown_minutes`，默认 60 分钟），连着的两条换装日程只算一次；
@@ -18,7 +18,10 @@
 - 发「换一套衣服」或 `/amoimage outfit` 手动换下一套；
 - 私聊不限量（`private_daily_limit=0`），群聊每群每天 20 张（`group_daily_limit`）；
 - 群聊必须真正 @ 机器人，唤醒词不再算；
-- `safe_mode` 分级内容边界，`draw_for` 和记忆上下文同样受限。
+- `safe_mode` 分级内容边界，`draw_for` 和记忆上下文同样受限；
+- 新增 `provider`：openai / openai_chat / gemini / custom，一套配置换后端；
+- 面板重做成四个标签页：概览、配置（可保存）、试画、记录；
+- 提示词补上性别锚、角色名和日程里的「正在干嘛」，不再画成男生、不再和日程对不上。
 
 
 ## 0.8.0 公开出图接口
@@ -132,7 +135,11 @@
 
 ## 后端兼容
 
-- 支持 `data[0].url` 与 `data[0].b64_json` 两种返回；`url` 模式会先把图片下载成字节再发，避免平台裂图；
+- `provider=openai`：`/images/generations`，认 `data[].url`、`data[].b64_json`、`images[].url`；
+- `provider=openai_chat`：`/chat/completions`，认 markdown 图片链接和 `message.images`；
+- `provider=gemini`：原生 `generateContent`，认 `candidates[].content.parts[].inlineData`；
+- `provider=custom`：完整 URL + 请求体模板 + 响应路径，接非标准端点；
+- `url` 模式会先把图片下载成字节再发，避免平台裂图；
 - `url` 模式若下载失败、`b64` 解析失败、接口 4xx/5xx、超时，统一降到 `error_reply`；
 - one-api / new-api / 自建 SD 兼容层只要实现了 `/images/generations` 就能用。
 

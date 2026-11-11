@@ -14,43 +14,136 @@
       <button class="icon-btn" id="theme" title="切换深浅色">◐</button>
     </header>
 
-    <section class="card" id="statusCard">
-      <div class="card-title">
-        <span>后端</span>
-        <span class="pill" id="enablePill">…</span>
+    <nav class="tabs">
+      <button class="tab on" data-tab="status">概览</button>
+      <button class="tab" data-tab="config">配置</button>
+      <button class="tab" data-tab="test">试画</button>
+      <button class="tab" data-tab="history">记录</button>
+    </nav>
+
+    <section class="pane" id="pane-status">
+      <div class="card">
+        <div class="card-title">
+          <span>后端</span>
+          <span class="pill" id="enablePill">…</span>
+        </div>
+        <dl class="kv">
+          <dt>类型</dt><dd id="providerName">—</dd>
+          <dt>地址</dt><dd id="apiBase">—</dd>
+          <dt>模型</dt><dd id="modelName">—</dd>
+          <dt>尺寸</dt><dd id="sizeText">—</dd>
+          <dt>密钥</dt><dd id="keyMasked">—</dd>
+          <dt>今日</dt><dd id="usedToday">—</dd>
+          <dt>累计</dt><dd id="callsTotal">—</dd>
+        </dl>
+        <div class="meta" id="statusMeta">加载中…</div>
       </div>
-      <dl class="kv">
-        <dt>地址</dt><dd id="apiBase">—</dd>
-        <dt>模型</dt><dd id="model">—</dd>
-        <dt>尺寸</dt><dd id="size">—</dd>
-        <dt>密钥</dt><dd id="keyMasked">—</dd>
-        <dt>今日已画</dt><dd id="usedToday">—</dd>
-        <dt>累计</dt><dd id="callsTotal">—</dd>
-      </dl>
-      <div class="meta" id="statusMeta">加载中…</div>
     </section>
 
-    <section class="card">
-      <div class="card-title"><span>试画一张</span></div>
-      <textarea id="prompt" rows="2" placeholder="例如：下雨天的便利店门口，她撑着伞回头">窗边的猫，午后阳光</textarea>
+    <section class="pane" id="pane-config" hidden>
+      <div class="card">
+        <div class="card-title"><span>后端</span><span class="hint" id="presetHint">选预设会填地址和模型</span></div>
+        <div class="field">
+          <label>预设</label>
+          <select id="preset"><option value="">手动填写</option></select>
+        </div>
+        <div class="field">
+          <label>类型</label>
+          <select id="provider">
+            <option value="openai">openai（/images/generations）</option>
+            <option value="openai_chat">openai_chat（/chat/completions）</option>
+            <option value="gemini">gemini（原生 generateContent）</option>
+            <option value="custom">custom（自定义端点）</option>
+          </select>
+        </div>
+        <div class="field"><label>api_base</label><input id="api_base" spellcheck="false" placeholder="https://api.openai.com/v1" /></div>
+        <div class="field"><label>api_key</label><input id="api_key" type="password" spellcheck="false" placeholder="留空 = 不修改" /></div>
+        <div class="field"><label>model</label><input id="model" spellcheck="false" placeholder="gpt-image-1 / Kwai-Kolors/Kolors" /></div>
+        <div class="grid2">
+          <div class="field"><label>size</label><input id="size" spellcheck="false" placeholder="1024x1024" /></div>
+          <div class="field"><label>aspect_ratio</label><input id="aspect_ratio" spellcheck="false" placeholder="留空自动" /></div>
+          <div class="field"><label>n</label><input id="n" type="number" min="1" /></div>
+          <div class="field"><label>quality</label><input id="quality" spellcheck="false" placeholder="留空不发" /></div>
+        </div>
+        <div class="field"><label>负面提示词</label><textarea id="negative_prompt" rows="2" spellcheck="false"></textarea></div>
+        <label class="check"><input type="checkbox" id="chat_modalities" /> Chat 通道要求图片模态（modalities）</label>
+
+        <div id="customBlock" hidden>
+          <div class="field"><label>custom_url（完整地址）</label><input id="custom_url" spellcheck="false" /></div>
+          <div class="field"><label>custom_body（JSON 模板）</label><textarea id="custom_body" rows="3" spellcheck="false"></textarea></div>
+          <div class="field"><label>custom_response_path</label><input id="custom_response_path" spellcheck="false" placeholder="data.images[0].url" /></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span>人设一致性</span></div>
+        <div class="field"><label>外观（脸、眼睛、体型）</label><textarea id="character_appearance" rows="2"></textarea></div>
+        <div class="grid2">
+          <div class="field"><label>性别</label>
+            <select id="character_gender">
+              <option value="自动">自动</option>
+              <option value="女">女</option>
+              <option value="男">男</option>
+            </select>
+          </div>
+          <div class="field"><label>角色名 / 一句话人设</label><input id="character_persona" placeholder="留空用陪伴的人格名" /></div>
+          <div class="field"><label>发型（固定）</label><input id="character_hairstyle" /></div>
+          <div class="field"><label>换装冷却（分钟）</label><input id="outfit_change_cooldown_minutes" type="number" min="0" /></div>
+        </div>
+        <div class="field"><label>服装池（每行一套）</label><textarea id="character_outfits" rows="3"></textarea></div>
+        <label class="check"><input type="checkbox" id="lock_scene_to_schedule" /> 场景 / 活动锁定日程（不瞬移）</label>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span>使用限制</span></div>
+        <div class="grid2">
+          <label class="check"><input type="checkbox" id="enable" /> 启用插件</label>
+          <label class="check"><input type="checkbox" id="safe_mode" /> 内容边界</label>
+          <label class="check"><input type="checkbox" id="allow_private" /> 私聊可用</label>
+          <label class="check"><input type="checkbox" id="allow_group" /> 群聊可用</label>
+          <label class="check"><input type="checkbox" id="require_at_in_group" /> 群里必须真 @</label>
+          <label class="check"><input type="checkbox" id="quote_in_group" /> 群里引用原消息</label>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>冷却（秒）</label><input id="cooldown_seconds" type="number" min="0" /></div>
+          <div class="field"><label>私聊每日</label><input id="private_daily_limit" type="number" min="0" /></div>
+          <div class="field"><label>群聊每日 / 群</label><input id="group_daily_limit" type="number" min="0" /></div>
+          <div class="field"><label>发图前缀</label><input id="reply_prefix" /></div>
+        </div>
+        <div class="field"><label>被拦时的回复</label><input id="blocked_reply" /></div>
+      </div>
+
       <div class="row">
-        <button class="btn" id="draw">画</button>
-        <span class="hint" id="drawHint">面板调用不算聊天额度</span>
-      </div>
-      <div class="preview" id="preview" hidden>
-        <img id="previewImg" alt="预览" />
-        <div class="meta" id="previewMeta"></div>
+        <button class="btn" id="save">保存配置</button>
+        <span class="hint" id="saveHint">保存后立即生效</span>
       </div>
     </section>
 
-    <section class="card">
-      <div class="card-title">
-        <span>最近画的</span>
-        <button class="link" id="refresh">刷新</button>
+    <section class="pane" id="pane-test" hidden>
+      <div class="card">
+        <div class="card-title"><span>试画一张</span></div>
+        <textarea id="prompt" rows="2" placeholder="例如：下雨天的便利店门口，她撑着伞回头">窗边的猫，午后阳光</textarea>
+        <div class="row">
+          <button class="btn" id="draw">画</button>
+          <span class="hint" id="drawHint">面板调用不算聊天额度</span>
+        </div>
+        <div class="preview" id="preview" hidden>
+          <img id="previewImg" alt="预览" />
+          <div class="meta" id="previewMeta"></div>
+        </div>
       </div>
-      <ul class="list" id="history">
-        <li class="empty">还没有记录</li>
-      </ul>
+    </section>
+
+    <section class="pane" id="pane-history" hidden>
+      <div class="card">
+        <div class="card-title">
+          <span>最近画的</span>
+          <button class="link" id="refresh">刷新</button>
+        </div>
+        <ul class="list" id="history">
+          <li class="empty">还没有记录</li>
+        </ul>
+      </div>
     </section>
 
     <footer class="foot">Astrbot_Amo_Image · 反馈 QQ 群 1055679275</footer>

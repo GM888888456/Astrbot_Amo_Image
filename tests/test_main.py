@@ -112,7 +112,7 @@ def test_generate_retries_with_alias_style_on_400():
     p = make_plugin()
     calls = []
 
-    async def fake_post(url, body):
+    async def fake_post(url, body, headers=None):
         calls.append(dict(body))
         if "size" in body:
             raise main.APIError(400, "unknown field size")
@@ -383,6 +383,23 @@ def test_web_routes_registered():
     assert "/Astrbot_Amo_Image/history" in routes
     assert "/Astrbot_Amo_Image/test" in routes
     assert "/Astrbot_Amo_Image/config" in routes
+    assert "/Astrbot_Amo_Image/config/save" in routes
+    assert "/Astrbot_Amo_Image/presets" in routes
+
+
+def test_presets_cover_all_providers():
+    p = make_plugin()
+    items = collect(p.api_presets())["data"]["items"]
+    providers = {item["provider"] for item in items}
+    assert {"openai", "openai_chat", "gemini", "custom"} <= providers
+
+
+def test_config_api_exposes_gender_and_provider():
+    p = make_plugin(character_gender="女", character_persona="Amo")
+    data = collect(p.api_config())["data"]
+    assert data["provider"] == "openai"
+    assert data["character_gender"] == "女"
+    assert data["character_persona"] == "Amo"
 
 
 def test_api_status_shape_and_masked_key():
@@ -561,7 +578,7 @@ def test_negative_prompt_sent_and_dropped_on_400():
 
     calls = []
 
-    async def fake_post(url, body):
+    async def fake_post(url, body, headers=None):
         calls.append(dict(body))
         if "negative_prompt" in body:
             raise main.APIError(400, "unknown field negative_prompt")
@@ -631,3 +648,122 @@ def test_command_draw_blocks_unsafe_prompt():
     ev = _Event()
     out = collect(p.amoimage(ev, "draw", "裸体"))
     assert out and out[0].kind == "plain" and "画不了" in out[0].payload
+
+
+def test_gender_and_persona_and_activity_in_prompt():
+    p = make_plugin(character_outfits=["JK 制服"], character_hairstyle="双马尾",
+                    character_gender="女", character_persona="Amo")
+    p._companion = lambda: FakeCompanion(place="城郊的湖边")
+    text = p._final_prompt("在窗边看书")
+    assert text.startswith("女生")
+    assert "角色：Amo" in text
+    assert "此刻在城郊的湖边，正在在家看书" in text
+
+
+def test_gender_auto_from_appearance():
+    p = make_plugin(character_appearance="黑色短发男生，白色衬衫")
+    assert p._gender() == "男生"
+    q = make_plugin(character_appearance="银灰长发、琥珀色眼睛")
+    assert q._gender() == "女生"
+
+
+def test_persona_falls_back_to_companion_name():
+    p = make_plugin()
+    fake = FakeCompanion()
+    fake.persona_name = "Amo"
+    p._companion = lambda: fake
+    assert p._persona() == "Amo"
+
+
+def test_activity_follows_schedule_lock():
+    p = make_plugin(lock_scene_to_schedule=False)
+    p._companion = lambda: FakeCompanion()
+    assert p._scene_activity() == ""
+    q = make_plugin()
+    q._companion = lambda: FakeCompanion()
+    assert q._scene_activity() == "在家看书"
+
+
+def test_chat_provider_builds_request():
+    p = make_plugin(provider="openai_chat", model="gpt-4o-image",
+                    api_base="https://x.test/v1")
+    provider = main.build_provider(p)
+    assert provider.name == "openai_chat"
+    url, headers, body = provider.request("画一只猫", p._options())
+    assert url == "https://x.test/v1/chat/completions"
+    assert headers["Authorization"] == "Bearer k-test"
+    assert body["model"] == "gpt-4o-image"
+    assert body["messages"][0]["content"] == "画一只猫"
+
+
+def test_gemini_provider_builds_request():
+    p = make_plugin(provider="gemini", api_key="g-key", model="models/gemini-2.5-flash-image",
+                    api_base="https://gemini.test/v1beta", size="1024x1024")
+    provider = main.build_provider(p)
+    assert provider.name == "gemini"
+    url, headers, body = provider.request("画一只猫", p._options())
+    assert url == "https://gemini.test/v1beta/models/gemini-2.5-flash-image:generateContent"
+    assert headers["x-goog-api-key"] == "g-key"
+    assert body["contents"][0]["parts"][0]["text"] == "画一只猫"
+    assert body["generationConfig"]["imageConfig"]["aspectRatio"] == "1:1"
+
+
+def test_custom_provider_template_and_path():
+    p = make_plugin(provider="custom", custom_url="https://api.test/draw",
+                    custom_body='{"text": "{prompt}", "model": "{model}", "n": {n}}',
+                    custom_response_path="result.images[0].url")
+    provider = main.build_provider(p)
+    url, _, body = provider.request("雨里的猫", p._options())
+    assert url == "https://api.test/draw"
+    assert body == {"text": "雨里的猫", "model": "test-model", "n": 1}
+    found = provider.parse({"result": {"images": [{"url": "https://img.test/x.png"}]}})
+    assert found == ("url", "https://img.test/x.png")
+
+
+def test_parse_markdown_and_inline_data():
+    kind, value = main.parse_image_response(
+        {"choices": [{"message": {"content": "画好了 ![图](https://img.test/a.png)"}}]})
+    assert (kind, value) == ("url", "https://img.test/a.png")
+
+    raw = b"\x89PNG" + b"0" * 90
+    b64 = base64.b64encode(raw).decode()
+    kind, value = main.parse_image_response(
+        {"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": b64}}]}}]})
+    assert kind == "b64" and value == raw
+
+
+def test_ratio_from_size():
+    assert main.ratio_from_size("1024x1024") == "1:1"
+    assert main.ratio_from_size("1024x1536") == "2:3"
+    assert main.ratio_from_size("") == ""
+
+
+def test_save_config_api_updates_and_persists():
+    class FakeRequest:
+        async def json(self, default=None):
+            return {"provider": "gemini", "api_base": "https://g.test", "model": "m",
+                    "character_gender": "男", "character_outfits": ["A 套", "B 套"],
+                    "api_key": "sk-…masked"}
+
+    class FakeConfig(dict):
+        def __init__(self, data):
+            super().__init__(data)
+            self.saved = 0
+
+        def save_config(self):
+            self.saved += 1
+
+    cfg = FakeConfig({"api_key": "sk-real-key"})
+    p = main.AmoImagePlugin(context=astrbot_stub._Context(), config=cfg)
+    original = main.web_request
+    main.web_request = FakeRequest()
+    try:
+        result = collect(p.api_save_config())
+    finally:
+        main.web_request = original
+    assert result["code"] == 0
+    assert cfg["provider"] == "gemini"
+    assert cfg["character_gender"] == "男"
+    assert cfg["character_outfits"] == ["A 套", "B 套"]
+    assert cfg["api_key"] == "sk-real-key"      # 掩码不覆盖真密钥
+    assert cfg.saved == 1

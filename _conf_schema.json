@@ -5,6 +5,18 @@
     "default": true,
     "hint": "总开关。关掉后任何触发词和 /amoimage 都不响应。"
   },
+  "provider": {
+    "type": "string",
+    "description": "生图后端类型",
+    "default": "openai",
+    "options": [
+      "openai",
+      "openai_chat",
+      "gemini",
+      "custom"
+    ],
+    "hint": "openai=OpenAI 兼容 /images/generations（硅基流动、智谱、百炼、one-api 都选它）；openai_chat=只开了 Chat 通道的代理；gemini=Google 原生；custom=自己填 URL 和请求体。"
+  },
   "api_base": {
     "type": "string",
     "description": "生图后端地址",
@@ -29,6 +41,12 @@
     "default": "1024x1024",
     "hint": "常见值 1024x1024 / 1024x1536 / 1536x1024。不同后端支持范围不同，报错时先查这里。"
   },
+  "aspect_ratio": {
+    "type": "string",
+    "description": "宽高比（可选）",
+    "default": "",
+    "hint": "Gemini 用 1:1 / 3:4 / 16:9 这类；留空按 size 自动换算。OpenAI 兼容后端忽略。"
+  },
   "n": {
     "type": "int",
     "description": "每次张数",
@@ -47,17 +65,58 @@
     "default": "",
     "hint": "可选 vivid / natural，留空就不发这个字段。"
   },
+  "chat_modalities": {
+    "type": "bool",
+    "description": "Chat 通道要求图片模态",
+    "default": false,
+    "hint": "只有 openai_chat 且后端要求 modalities=[image,text] 时才打开；普通 Chat 代理不要开。"
+  },
   "timeout": {
     "type": "float",
     "description": "超时秒数",
     "default": 90,
     "hint": "生图比聊天慢，建议不低于 60；超时会回一句人设化的失败话术。"
   },
+  "custom_url": {
+    "type": "string",
+    "description": "自定义后端完整 URL",
+    "default": "",
+    "hint": "provider=custom 时必填，例如 https://api.example.com/v1/draw。不会自动拼路径。"
+  },
+  "custom_body": {
+    "type": "string",
+    "description": "自定义请求体模板",
+    "default": "{\"prompt\": \"{prompt}\", \"model\": \"{model}\", \"size\": \"{size}\", \"n\": {n}}",
+    "hint": "合法 JSON；{prompt}/{model}/{size} 会替换成转义后的值，{n} 是数字。"
+  },
+  "custom_response_path": {
+    "type": "string",
+    "description": "自定义响应路径",
+    "default": "",
+    "hint": "例如 data.images[0].url 或 candidates[0].content.parts[0].inlineData.data；留空走通用解析。"
+  },
   "character_appearance": {
     "type": "string",
     "description": "人物外观",
     "default": "",
     "hint": "拼在提示词最前面，保证每次画出来是同一个人。例如「银灰长发、琥珀色眼睛、米色开衫」。留空只画提示词本身。"
+  },
+  "character_gender": {
+    "type": "string",
+    "description": "角色性别",
+    "default": "自动",
+    "options": [
+      "自动",
+      "女",
+      "男"
+    ],
+    "hint": "不写性别时模型容易画成男生；自动=看外观/角色描述，判断不出按女生。"
+  },
+  "character_persona": {
+    "type": "string",
+    "description": "角色名 / 一句话人设",
+    "default": "",
+    "hint": "写进提示词「角色：…」，把画面和人格接上；留空自动用陪伴的人格名。"
   },
   "use_memory_context": {
     "type": "bool",

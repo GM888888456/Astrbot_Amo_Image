@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.12.0（多后端 + 配置面板 + 性别/人格/日程修正）
+
+之前只有一个「OpenAI 兼容 /images/generations」的实现，换个后端就得改代码；
+面板也只能看，不能改配置。顺手修了三个影响出图正确性的问题。
+
+### 多后端 Provider 层
+
+参考 astrbot_plugin_omnidraw 的拆法（Provider 各自负责「发请求 + 认响应」），
+代码是本仓库自己写的，没有复制其实现（该项目 Python 部分没有 LICENSE）。
+
+- `provider=openai`：`/images/generations`，保留参数风格回退与负面词回退；
+- `provider=openai_chat`：`/chat/completions`，认 markdown 图片链接 / `message.images`；
+- `provider=gemini`：原生 `generateContent`，认 `inlineData`；
+- `provider=custom`：完整 URL + 请求体模板（`{prompt}` / `{model}` / `{size}` / `{n}`）
+  + 响应路径（`data.images[0].url`）；
+- 响应解析放宽：markdown、Gemini inlineData、Chat 图片、`images[]` 都能认。
+
+### 面板重做
+
+- 四个标签页：概览 / 配置 / 试画 / 记录；
+- 配置页可以直接改后端、密钥、模型、尺寸、负面词、人设、限额并保存
+  （`POST /Astrbot_Amo_Image/config/save`，密钥留空或回传掩码不会覆盖）；
+- 内置后端预设（OpenAI / 硅基流动 / 智谱 / 百炼 / Gemini / Chat 通道），点一下填地址和模型；
+- 概览页显示当前后端类型和「今天穿什么」。
+
+### 出图正确性
+
+- **性别锚**：新增 `character_gender`（自动 / 女 / 男）。不写性别时模型会自由发挥，
+  之前出现过画成男生；`自动` 会看外观/角色描述，判断不出按女生。
+- **角色名**：新增 `character_persona`，写进提示词「角色：…」；留空自动用陪伴的人格名。
+- **日程活动**：原来只把「地点」写进提示词，现在连「正在干嘛」一起写，
+  图里的动作和日程对得上，不再只换个背景。
+- 提示词顺序改成：性别 → 角色 → 外观 → 今日造型 → 地点/活动 → 要求 → 上下文。
+
+### 测试
+
+74 passed（新增 provider 请求/解析、Markdown/inlineData、配置保存、性别与活动用例）。
+
 ## 0.11.0（分级内容边界 + 群聊限额）
 
 私聊和群聊是两种场合，混用一套规则要么管太死，要么管不住。

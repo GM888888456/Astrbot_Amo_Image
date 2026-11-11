@@ -44,16 +44,25 @@ try:
 except Exception:  # pragma: no cover - 没装 aiohttp 时退回线程 + urllib
     aiohttp = None  # type: ignore
 
-class APIError(RuntimeError):
-    """后端返回 >=400 时抛这个，带上状态码方便决定要不要换一套参数重试。"""
-
-    def __init__(self, status, message):
-        super().__init__("生图接口 %s: %s" % (status, message))
-        self.status = int(status or 0)
-
+try:
+    from .providers import (
+        APIError,
+        ImageOptions,
+        build_provider,
+        parse_image_response,
+        ratio_from_size,
+    )
+except Exception:  # pragma: no cover - 直接以脚本方式加载时
+    from providers import (  # type: ignore
+        APIError,
+        ImageOptions,
+        build_provider,
+        parse_image_response,
+        ratio_from_size,
+    )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.11.0"
+PLUGIN_VERSION = "0.12.0"
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
@@ -101,6 +110,49 @@ _GROUP_BLOCK_PATTERNS = (
     re.compile(r"情趣内衣|蕾丝内衣|比基尼|bikini|lingerie"),
     re.compile(r"露乳|露臀|走光|underwearonly|swimsuitonly"),
 )
+
+# 面板里的后端预设：只填 base/model，密钥由用户自己填
+PROVIDER_PRESETS = (
+    {"id": "openai", "name": "OpenAI 官方", "provider": "openai",
+     "api_base": "https://api.openai.com/v1", "model": "gpt-image-1"},
+    {"id": "siliconflow", "name": "硅基流动", "provider": "openai",
+     "api_base": "https://api.siliconflow.cn/v1", "model": "Kwai-Kolors/Kolors"},
+    {"id": "zhipu", "name": "智谱 BigModel", "provider": "openai",
+     "api_base": "https://open.bigmodel.cn/api/paas/v4", "model": "cogview-3-flash"},
+    {"id": "dashscope", "name": "阿里百炼", "provider": "openai",
+     "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "wanx2.1-t2i-turbo"},
+    {"id": "gemini", "name": "Gemini 官方", "provider": "gemini",
+     "api_base": "https://generativelanguage.googleapis.com/v1beta",
+     "model": "gemini-2.5-flash-image"},
+    {"id": "chat", "name": "Chat 通道（gpt-image / 代理）", "provider": "openai_chat",
+     "api_base": "https://api.openai.com/v1", "model": "gpt-4o-image"},
+    {"id": "custom", "name": "自定义端点", "provider": "custom",
+     "api_base": "", "model": ""},
+)
+
+# 面板能改的配置项（其余走 AstrBot 自己的配置页）
+WEB_EDITABLE = (
+    "provider", "api_base", "api_key", "model", "size", "n", "quality", "style",
+    "timeout", "request_style", "negative_prompt", "aspect_ratio", "chat_modalities",
+    "custom_url", "custom_body", "custom_response_path",
+    "enable", "allow_private", "allow_group", "require_at_in_group", "quote_in_group",
+    "cooldown_seconds", "private_daily_limit", "group_daily_limit", "safe_mode",
+    "blocked_reply", "reply_prefix", "error_reply",
+    "character_appearance", "character_hairstyle", "character_outfits",
+    "character_gender", "character_persona",
+    "outfit_change_keywords", "outfit_change_cooldown_minutes",
+    "lock_scene_to_schedule", "keywords", "photo_keywords", "photo_default_prompt",
+    "use_memory_context", "memory_context_limit",
+)
+WEB_BOOL_KEYS = frozenset({
+    "enable", "allow_private", "allow_group", "require_at_in_group", "quote_in_group",
+    "safe_mode", "lock_scene_to_schedule", "use_memory_context", "chat_modalities",
+})
+WEB_INT_KEYS = frozenset({
+    "n", "timeout", "cooldown_seconds", "private_daily_limit", "group_daily_limit",
+    "memory_context_limit", "outfit_change_cooldown_minutes",
+})
+WEB_LIST_KEYS = frozenset({"character_outfits", "outfit_change_keywords", "keywords", "photo_keywords"})
 
 DATA_PLUGIN_NAMES = (
     "Astr_Amo_data",
@@ -157,103 +209,34 @@ def match_keyword(text: str, keywords) -> str:
     return ""
 
 
-def _as_url(value):
-    text = str(value or "").strip()
-    return text if text.startswith("http://") or text.startswith("https://") else ""
-
-
-def _as_b64(value):
-    text = str(value or "").strip()
-    if not text:
-        return None
-    if text.startswith("data:"):
-        text = text.split(",", 1)[-1]
-    text = text.strip()
-    # 真图片的 base64 不会短；顺便 validate，避免把普通单词当图
-    if len(text) < 40:
-        return None
-    try:
-        return base64.b64decode(text, validate=True)
-    except Exception:
-        return None
-
-
-def _walk_candidates(node, depth=0):
-    """把各家返回结构摊平成「可能是 url / base64 的叶子」。
-
-    见过放图的地方不止一种：data[]、images[]、artifacts[]、results[]、
-    output.urls[]、result.images[]……这里不认厂商，只认形状。
-    """
-    if depth > 4:
-        return
-    if isinstance(node, str):
-        yield node
-        return
-    if isinstance(node, (list, tuple)):
-        for item in node:
-            yield from _walk_candidates(item, depth + 1)
-        return
-    if not isinstance(node, dict):
-        return
-    if any(key in node for key in ("url", "image_url", "imageUrl", "b64_json", "b64", "base64")):
-        yield node
-    for key in ("data", "images", "artifacts", "results", "output", "outputs",
-                "result", "image", "urls", "items"):
-        if key in node:
-            yield from _walk_candidates(node[key], depth + 1)
-
-
-def parse_image_response(payload) -> tuple:
-    """解析生图响应，返回 (kind, value)：kind 是 url 或 b64。
-
-    不绑定厂商：OpenAI 的 data[0].url / data[0].b64_json、SiliconFlow 的
-    images[0].url、以及 output.urls[] / artifacts[].base64 之类都能认。
-    """
-    if isinstance(payload, (str, list)):
-        candidates = _walk_candidates(payload)
-    elif isinstance(payload, dict):
-        candidates = _walk_candidates(payload)
-    else:
-        raise ValueError("响应不是 JSON")
-
-    for item in candidates:
-        if isinstance(item, str):
-            url = _as_url(item)
-            if url:
-                return ("url", url)
-            data = _as_b64(item)
-            if data:
-                return ("b64", data)
-            continue
-        if not isinstance(item, dict):
-            continue
-        for key in ("url", "image_url", "imageUrl"):
-            url = _as_url(item.get(key))
-            if url:
-                return ("url", url)
-        for key in ("b64_json", "b64", "base64", "image_base64"):
-            data = _as_b64(item.get(key))
-            if data:
-                return ("b64", data)
-    raise ValueError("响应里找不到图片（data / images / artifacts 均无 url 或 base64）")
-
-
 def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "",
-                 place: str = "") -> str:
-    """拼最终提示词：外观 → 今日固定造型 → 此刻地点 → 用户要求 → 剧情上下文。
+                 place: str = "", activity: str = "", gender: str = "",
+                 persona: str = "") -> str:
+    """拼最终提示词：性别 → 角色 → 外观 → 今日固定造型 → 地点/在干嘛 → 要求 → 上下文。
 
-    look / place 是为了「同一个人、同一天不换衣服、不瞬移」：造型按天固定，
-    地点来自日程里此刻那一格，不是随机换。
+    性别和角色放在最前面，是因为模型默认会「猜」人物：不写性别就容易画出男的，
+    不写角色名就接不上人格。地点和 activity 都来自日程里此刻那一格，不随机换。
     """
     parts = []
+    body = str(prompt or "")
+    if str(gender or "").strip():
+        parts.append(str(gender).strip())
+    if str(persona or "").strip() and str(persona).strip() not in body:
+        parts.append("角色：" + str(persona).strip())
     if str(appearance or "").strip():
         parts.append(str(appearance).strip())
-    body = str(prompt or "")
     # 陪伴那边的分享模板本身就带了 {place}，这里别再叠一遍「此刻在××」
     if str(look or "").strip() and str(look).strip() not in body:
         parts.append("今天的样子：" + str(look).strip())
-    if str(place or "").strip() and str(place).strip() not in body:
-        parts.append("此刻在" + str(place).strip())
+    where = str(place or "").strip()
+    doing = str(activity or "").strip()
+    if where and where not in body:
+        if doing and doing not in body:
+            parts.append("此刻在%s，正在%s" % (where, doing[:40]))
+        else:
+            parts.append("此刻在" + where)
+    elif doing and doing not in body:
+        parts.append("正在" + doing[:40])
     if body.strip():
         parts.append(body.strip())
     if context_lines:
@@ -598,24 +581,25 @@ class AmoImagePlugin(Star):
             body["style"] = style_name
         return body
 
-    async def _post_json(self, url: str, body: dict) -> dict:
+    async def _post_json(self, url: str, body: dict, headers=None) -> dict:
         timeout = max(10.0, self._float("timeout", 90.0))
         raw = json.dumps(body).encode("utf-8")
+        headers = dict(headers or self._headers())
         if aiohttp is not None:
             client_timeout = aiohttp.ClientTimeout(total=timeout)
             async with aiohttp.ClientSession(timeout=client_timeout) as session:
-                async with session.post(url, data=raw, headers=self._headers()) as resp:
+                async with session.post(url, data=raw, headers=headers) as resp:
                     text = await resp.text()
                     if resp.status >= 400:
                         raise APIError(resp.status, text[:300])
                     return json.loads(text)
-        return await asyncio.to_thread(self._post_json_blocking, url, raw, timeout)
+        return await asyncio.to_thread(self._post_json_blocking, url, raw, timeout, headers)
 
-    def _post_json_blocking(self, url: str, raw: bytes, timeout: float) -> dict:
+    def _post_json_blocking(self, url: str, raw: bytes, timeout: float, headers=None) -> dict:
         import urllib.error
         import urllib.request
 
-        req = urllib.request.Request(url, data=raw, headers=self._headers(), method="POST")
+        req = urllib.request.Request(url, data=raw, headers=dict(headers or self._headers()), method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
                 return json.loads(resp.read().decode("utf-8"))
@@ -659,35 +643,22 @@ class AmoImagePlugin(Star):
                 order.append(item)
         return order
 
+    def _provider(self):
+        """按配置挑后端（openai / openai_chat / gemini / custom）。"""
+        return build_provider(self)
+
+    def _options(self):
+        return ImageOptions(
+            size=self._cfg("size", "1024x1024"),
+            n=self._int("n", 1),
+            quality=str(self._cfg("quality", "") or ""),
+            style=str(self._cfg("style", "") or ""),
+            negative=self._negative(),
+            aspect_ratio=str(self._cfg("aspect_ratio", "") or ""),
+        )
+
     async def _generate(self, prompt: str) -> bytes:
-        endpoint = self._endpoint()
-        errors = []
-        # 只有上次被后端明确拒过，才不再带 negative_prompt，省一次 400
-        negative = self._negative() if self._negative_ok.get(endpoint, True) else ""
-        for style in self._style_order():
-            variants = [self._body(prompt, style, negative)]
-            if negative:
-                variants.append(self._body(prompt, style, ""))
-            for index, body in enumerate(variants):
-                try:
-                    payload = await self._post_json(endpoint, body)
-                except APIError as exc:
-                    errors.append(str(exc))
-                    if index == 0 and negative:
-                        # 这个后端不认 negative_prompt：记住，并去掉它再试
-                        self._negative_ok[endpoint] = False
-                    # 只有「参数不认识 / 路径不对」才值得换一套参数重试；
-                    # 401、429、5xx 换参数也没用，直接抛给上层。
-                    if exc.status in self.RETRY_STATUS:
-                        continue
-                    raise
-                self._style_cache[endpoint] = style
-                if negative:
-                    # 带 negative 的那一版成功才算认；去掉之后才成功说明不认
-                    self._negative_ok[endpoint] = index == 0
-                kind, value = parse_image_response(payload)
-                return await self._download(value) if kind == "url" else value
-        raise RuntimeError("；".join(errors[-2:]) or "生图接口没有可用的参数风格")
+        return await self._provider().generate(prompt, self._options())
 
     # ---------- 一致性：同一个人、同一天同一套造型、同一个地点 ----------
 
@@ -888,6 +859,43 @@ class AmoImagePlugin(Star):
         activity = state.get("activity") or {}
         return str(activity.get("place") or "").strip()
 
+    def _scene_activity(self):
+        """此刻在干嘛；和地点一样来自日程，避免图和日程对不上。"""
+        if not self._bool("lock_scene_to_schedule", True):
+            return ""
+        activity = (self._companion_state().get("activity") or {})
+        return str(activity.get("activity") or "").strip()[:40]
+
+    def _gender(self):
+        """性别锚：不写的话模型会自由发挥，之前就出现过画成男生。
+
+        `自动` 时先看外观/角色描述里有没有线索，没有就按 Amo 的默认女生。
+        """
+        raw = str(self._cfg("character_gender", "自动") or "自动").strip()
+        if raw in ("女", "女生", "female", "f", "F"):
+            return "女生"
+        if raw in ("男", "男生", "male", "m", "M"):
+            return "男生"
+        text = " ".join([
+            str(self._cfg("character_appearance", "") or ""),
+            str(self._cfg("character_persona", "") or ""),
+        ])
+        if any(word in text for word in ("男生", "男孩", "少年", "男性")):
+            return "男生"
+        return "女生"
+
+    def _persona(self):
+        """角色名/一句话人设；没配就用陪伴的人格名。"""
+        value = str(self._cfg("character_persona", "") or "").strip()
+        if value:
+            return value
+        companion = self._companion()
+        name = str(getattr(companion, "persona_name", "") or "").strip()
+        if not name:
+            conf = getattr(companion, "config", None) or {}
+            name = str(conf.get("persona_name") or conf.get("bot_name") or "").strip()
+        return name
+
     def _final_prompt(self, prompt, context_lines=None):
         return build_prompt(
             self._cfg("character_appearance", ""),
@@ -895,6 +903,9 @@ class AmoImagePlugin(Star):
             context_lines,
             look=self._daily_look(),
             place=self._scene_place(),
+            activity=self._scene_activity(),
+            gender=self._gender(),
+            persona=self._persona(),
         )
 
     async def draw_for(self, umo: str, uid: str = "", prompt: str = "") -> bytes | None:
@@ -938,6 +949,8 @@ class AmoImagePlugin(Star):
             ("/status", self.api_status, ["GET"]),
             ("/history", self.api_history, ["GET"]),
             ("/config", self.api_config, ["GET"]),
+            ("/config/save", self.api_save_config, ["POST"]),
+            ("/presets", self.api_presets, ["GET"]),
             ("/test", self.api_test, ["POST"]),
         ]
         for path, handler, methods in routes:
@@ -1002,6 +1015,7 @@ class AmoImagePlugin(Star):
                 "enabled": self._bool("enable", True),
                 "api_base": str(self._cfg("api_base", "") or ""),
                 "api_key_masked": self._mask_key(),
+                "provider": self._provider().name,
                 "model": str(self._cfg("model", "") or ""),
                 "size": str(self._cfg("size", "") or ""),
                 "allow_private": self._bool("allow_private", True),
@@ -1024,17 +1038,101 @@ class AmoImagePlugin(Star):
 
     async def api_config(self):
         keys = [
-            "enable", "api_base", "model", "size", "n", "quality", "style", "timeout",
+            "provider", "enable", "api_base", "model", "size", "n", "quality", "style",
+            "timeout", "request_style", "negative_prompt", "aspect_ratio", "chat_modalities",
+            "custom_url", "custom_body", "custom_response_path",
             "character_appearance", "use_memory_context", "memory_context_limit",
             "allow_private", "allow_group", "require_at_in_group", "quote_in_group",
-            "keywords", "cooldown_seconds", "private_daily_limit", "group_daily_limit",
+            "keywords", "photo_keywords", "photo_default_prompt", "cooldown_seconds",
+            "private_daily_limit", "group_daily_limit",
             "safe_mode", "blocked_reply", "reply_prefix", "error_reply",
-            "character_hairstyle", "character_outfits", "outfit_change_keywords",
-            "outfit_change_cooldown_minutes", "lock_scene_to_schedule", "negative_prompt",
+            "character_hairstyle", "character_outfits", "character_gender",
+            "character_persona", "outfit_change_keywords",
+            "outfit_change_cooldown_minutes", "lock_scene_to_schedule",
         ]
         data = {k: self._cfg(k, None) for k in keys}
+        data["provider"] = str(self._cfg("provider", "openai") or "openai")
+        data["character_gender"] = str(self._cfg("character_gender", "自动") or "自动")
         data["api_key"] = self._mask_key()
         return self._json({"code": 0, "data": data})
+
+    async def api_presets(self):
+        """面板里的后端预设，只填 base/model，不动密钥。"""
+        return self._json({"code": 0, "data": {"items": list(PROVIDER_PRESETS)}})
+
+    def _to_bool(self, value):
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("1", "true", "yes", "on", "是", "开")
+
+    async def api_save_config(self):
+        """面板保存配置：只认白名单字段，密钥留空/掩码不覆盖。"""
+        payload = {}
+        if web_request is not None:
+            try:
+                payload = await web_request.json(default={}) or {}
+            except Exception:
+                payload = {}
+        if not isinstance(payload, dict):
+            return self._fail("配置格式不对")
+        data = {}
+        for key in WEB_EDITABLE:
+            if key not in payload:
+                continue
+            value = payload[key]
+            try:
+                if key in WEB_BOOL_KEYS:
+                    value = self._to_bool(value)
+                elif key in WEB_INT_KEYS:
+                    value = int(float(value))
+                elif key in WEB_LIST_KEYS:
+                    if isinstance(value, str):
+                        text = value.replace("，", "\n").replace(",", "\n")
+                        value = [line.strip() for line in text.splitlines()]
+                    value = [str(item).strip() for item in (value or []) if str(item).strip()]
+                else:
+                    value = str("" if value is None else value)
+            except Exception:
+                continue
+            data[key] = value
+        # 密钥：留空 / 回传掩码都不覆盖
+        key_value = str(data.get("api_key", "") or "")
+        if not key_value or "…" in key_value or key_value == self._mask_key():
+            data.pop("api_key", None)
+        if not data:
+            return self._fail("没有要保存的字段")
+        try:
+            if hasattr(self.config, "update"):
+                self.config.update(data)
+            else:
+                self.config = dict(self.config or {})
+                self.config.update(data)
+        except Exception as exc:
+            return self._fail("保存失败：%s" % exc)
+        # 换后端/地址/模型后，旧的参数风格结论不再作数
+        if any(name in data for name in ("provider", "api_base", "model", "request_style")):
+            self._style_cache.clear()
+            self._negative_ok.clear()
+        saved = await self._persist_config()
+        return self._json({"code": 0, "data": {"saved": bool(saved), "applied": sorted(data)}})
+
+    async def _persist_config(self):
+        """把配置写回 AstrBot；配置对象不支持保存时只留内存，不报错。"""
+        cfg = self.config
+        saver = getattr(cfg, "save_config_async", None)
+        if callable(saver):
+            try:
+                return bool(await saver())
+            except Exception as exc:
+                logger.warning("[amo_image] 配置落盘失败: %s" % exc)
+        saver = getattr(cfg, "save_config", None)
+        if callable(saver):
+            try:
+                await asyncio.to_thread(saver)
+                return True
+            except Exception as exc:
+                logger.warning("[amo_image] 配置落盘失败: %s" % exc)
+        return False
 
     async def api_test(self):
         """面板里试画一张：返回 data:image/png;base64，前端直接 <img>。"""
