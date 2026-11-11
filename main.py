@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
     )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.12.0"
+PLUGIN_VERSION = "0.13.0"
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
@@ -956,6 +956,7 @@ class AmoImagePlugin(Star):
             ("/config", self.api_config, ["GET"]),
             ("/config/save", self.api_save_config, ["POST"]),
             ("/presets", self.api_presets, ["GET"]),
+            ("/persona/extract", self.api_persona_extract, ["POST"]),
             ("/test", self.api_test, ["POST"]),
         ]
         for path, handler, methods in routes:
@@ -1064,6 +1065,85 @@ class AmoImagePlugin(Star):
     async def api_presets(self):
         """面板里的后端预设，只填 base/model，不动密钥。"""
         return self._json({"code": 0, "data": {"items": list(PROVIDER_PRESETS)}})
+
+    # 外观线索词：命中这些词的分句才像「长什么样」，不是性格/说话风格
+    _LOOK_WORDS = (
+        "头发", "长发", "短发", "发色", "蓝发", "银发", "黑发", "金发",
+        "眼睛", "眼眸", "瞳孔", "耳朵", "兽耳", "鳍耳", "尾巴",
+        "皮肤", "身高", "体型", "脸型", "酒窝", "虎牙", "刘海",
+    )
+
+    @classmethod
+    def _look_clauses(cls, text):
+        """从人格文本里挑出描述长相的分句；挑不到就返回空。"""
+        out = []
+        for line in str(text or "").replace("；", "。").split("。"):
+            for clause in line.split("，"):
+                value = clause.strip()
+                if not value or len(value) > 24:
+                    continue
+                if any(word in value for word in cls._LOOK_WORDS) and value not in out:
+                    out.append(value)
+                if len(out) >= 3:
+                    return out
+        return out
+
+    @staticmethod
+    def _guess_gender(text):
+        raw = str(text or "")
+        female = sum(raw.count(word) for word in ("女孩", "女生", "少女", "女性", "姑娘"))
+        male = sum(raw.count(word) for word in ("男孩", "男生", "少年", "男性"))
+        return "男" if male > female else "女"
+
+    async def _persona_text(self):
+        """读陪伴的人格设定；读不到返回空串。"""
+        companion = self._companion()
+        llm = getattr(companion, "llm", None)
+        reader = getattr(llm, "persona", None) if llm is not None else None
+        if callable(reader):
+            try:
+                text = await reader("")
+                if text:
+                    return str(text)
+            except Exception as exc:
+                logger.debug("[amo_image] 读人格失败: %s" % exc)
+        try:
+            manager = getattr(self.context, "persona_manager", None)
+            if manager is not None:
+                persona = await manager.get_default_persona_v3(None)
+                if isinstance(persona, dict):
+                    return str(persona.get("prompt") or "")
+                return str(getattr(persona, "prompt", "") or "")
+        except Exception as exc:
+            logger.debug("[amo_image] 读 AstrBot 人格失败: %s" % exc)
+        return ""
+
+    def _persona_name(self):
+        companion = self._companion()
+        name = str(getattr(companion, "persona_name", "") or "").strip()
+        if not name:
+            conf = getattr(companion, "config", None) or {}
+            name = str(conf.get("persona_name") or conf.get("bot_name") or "").strip()
+        return name
+
+    async def api_persona_extract(self):
+        """从人格设定里提取性别/外观/角色名，填进面板。"""
+        text = await self._persona_text()
+        clauses = self._look_clauses(text)
+        appearance = "，".join(clauses)
+        source = "人格"
+        if not text:
+            source = "默认"
+        return self._json({
+            "code": 0,
+            "data": {
+                "gender": self._guess_gender(text),
+                "appearance": appearance,
+                "persona": self._persona_name(),
+                "source": source,
+                "raw": str(text or "").strip()[:160],
+            },
+        })
 
     def _to_bool(self, value):
         if isinstance(value, bool):

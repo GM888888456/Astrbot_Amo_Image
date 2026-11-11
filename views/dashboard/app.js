@@ -19,6 +19,8 @@ const CHECK_FIELDS = [
 
 const els = {
   theme: $("theme"),
+  extractPersona: $("extractPersona"),
+  personaHint: $("personaHint"),
   enablePill: $("enablePill"),
   providerName: $("providerName"),
   apiBase: $("apiBase"),
@@ -71,6 +73,14 @@ function fmtBytes(n) {
   if (value >= 1024 * 1024) return (value / 1024 / 1024).toFixed(1) + " MB";
   if (value >= 1024) return (value / 1024).toFixed(0) + " KB";
   return value + " B";
+}
+
+function unwrap(result) {
+  if (result && typeof result === "object" && "data" in result &&
+      ("code" in result || "status" in result)) {
+    return result.data ?? result;
+  }
+  return result;
 }
 
 async function get(path, params) {
@@ -144,8 +154,10 @@ function renderHistory(items) {
 async function refresh() {
   try {
     const [status, history] = await Promise.all([get("status"), get("history")]);
-    if (status && status.data) renderStatus(status.data);
-    if (history && history.data) renderHistory(history.data.items);
+    const info = unwrap(status);
+    const records = unwrap(history);
+    if (info) renderStatus(info);
+    if (records) renderHistory(records.items || []);
   } catch (err) {
     els.statusMeta.textContent = String(err.message || err);
   }
@@ -153,8 +165,8 @@ async function refresh() {
 
 async function loadPresets() {
   try {
-    const result = await get("presets");
-    presets = (result && result.data && result.data.items) || [];
+    const result = unwrap(await get("presets"));
+    presets = (result && result.items) || [];
   } catch (_) {
     presets = [];
   }
@@ -175,8 +187,8 @@ els.preset.addEventListener("change", () => {
 
 async function loadConfig() {
   try {
-    const result = await get("config");
-    const data = (result && result.data) || {};
+    const result = unwrap(await get("config"));
+    const data = result || {};
     TEXT_FIELDS.forEach((key) => {
       const el = $(key);
       if (el && data[key] != null) el.value = String(data[key]);
@@ -230,15 +242,14 @@ els.save.addEventListener("click", async () => {
   els.save.disabled = true;
   els.saveHint.textContent = "保存中…";
   try {
-    const result = await post("config/save", collectConfig());
-    if (result && result.code === 0) {
-      const saved = result.data && result.data.saved;
-      els.saveHint.textContent = saved ? "已保存并写回配置" : "已生效（当前配置对象不支持落盘）";
+    const saved = unwrap(await post("config/save", collectConfig())) || {};
+    if (saved.saved !== undefined || saved.applied) {
+      els.saveHint.textContent = saved.saved ? "已保存并写回配置" : "已生效（当前配置对象不支持落盘）";
       $("api_key").value = "";
       await refresh();
       await loadConfig();
     } else {
-      els.saveHint.textContent = (result && (result.message || result.msg)) || "保存失败";
+      els.saveHint.textContent = saved.message || saved.msg || "保存失败";
     }
   } catch (err) {
     els.saveHint.textContent = String(err.message || err);
@@ -254,20 +265,38 @@ els.draw.addEventListener("click", async () => {
   els.drawHint.textContent = "画着呢…";
   els.preview.hidden = true;
   try {
-    const result = await post("test", { prompt });
-    if (result && result.data && result.data.image) {
-      els.previewImg.src = result.data.image;
-      els.previewMeta.textContent = fmtBytes(result.data.bytes) + " · " + result.data.ms + "ms";
+    const result = unwrap(await post("test", { prompt })) || {};
+    if (result.image) {
+      els.previewImg.src = result.image;
+      els.previewMeta.textContent = fmtBytes(result.bytes) + " · " + result.ms + "ms";
       els.preview.hidden = false;
       els.drawHint.textContent = "画好了";
     } else {
-      els.drawHint.textContent = (result && (result.message || result.error)) || "没画出来";
+      els.drawHint.textContent = result.message || result.error || "没画出来";
     }
   } catch (err) {
     els.drawHint.textContent = String(err.message || err);
   } finally {
     els.draw.disabled = false;
     refresh();
+  }
+});
+
+els.extractPersona.addEventListener("click", async () => {
+  els.extractPersona.disabled = true;
+  els.personaHint.textContent = "读人格中…";
+  try {
+    const info = unwrap(await post("persona/extract", {})) || {};
+    if (info.appearance) $("character_appearance").value = info.appearance;
+    if (info.gender) $("character_gender").value = info.gender;
+    if (info.persona) $("character_persona").value = info.persona;
+    els.personaHint.textContent = info.source
+      ? "已从" + info.source + "提取，记得点保存"
+      : "已提取，记得点保存";
+  } catch (err) {
+    els.personaHint.textContent = "提取失败：" + String(err.message || err);
+  } finally {
+    els.extractPersona.disabled = false;
   }
 });
 

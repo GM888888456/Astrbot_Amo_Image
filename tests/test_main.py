@@ -385,6 +385,7 @@ def test_web_routes_registered():
     assert "/Astrbot_Amo_Image/config" in routes
     assert "/Astrbot_Amo_Image/config/save" in routes
     assert "/Astrbot_Amo_Image/presets" in routes
+    assert "/Astrbot_Amo_Image/persona/extract" in routes
 
 
 def test_presets_cover_all_providers():
@@ -775,3 +776,51 @@ def test_empty_appearance_falls_back_to_default():
     text = p._final_prompt("自拍")
     assert main.DEFAULT_APPEARANCE in text
     assert text.startswith("女生")
+
+
+class FakeLLM:
+    def __init__(self, text):
+        self.text = text
+
+    async def persona(self, umo=""):
+        return self.text
+
+
+def test_persona_extract_pulls_gender_and_looks():
+    class FakeCompanion2:
+        persona_name = "Amo"
+
+        def __init__(self):
+            self.llm = FakeLLM("你叫Amo，蓝发蓝眼，鲸鱼鳍耳，性格温柔，说话慢一点。")
+
+    p = make_plugin()
+    p._companion = lambda: FakeCompanion2()
+    data = collect(p.api_persona_extract())["data"]
+    assert data["gender"] == "女"
+    assert data["persona"] == "Amo"
+    assert "蓝发蓝眼" in data["appearance"]
+    assert "鲸鱼鳍耳" in data["appearance"]
+    assert data["source"] == "人格"
+
+
+def test_persona_extract_male():
+    class FakeCompanion3:
+        persona_name = "阿岚"
+
+        def __init__(self):
+            self.llm = FakeLLM("你叫阿岚，男生，黑色短发，声音低。")
+
+    p = make_plugin()
+    p._companion = lambda: FakeCompanion3()
+    data = collect(p.api_persona_extract())["data"]
+    assert data["gender"] == "男"
+    assert "黑色短发" in data["appearance"]
+
+
+def test_persona_extract_without_persona():
+    p = make_plugin()
+    p._companion = lambda: None
+    data = collect(p.api_persona_extract())["data"]
+    assert data["gender"] == "女"
+    assert data["appearance"] == ""
+    assert data["source"] == "默认"

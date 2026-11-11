@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.13.0（面板保存修复 + 从人格提取人物设定）
+
+### 保存一直失败
+
+不是配置写不进去，是面板读不懂回包：AstrBot 的插件页桥接会把
+`{"code": 0, "data": X}` **解包成 `X`** 再交给 iframe，而 0.12.0 的前端还在找
+`result.code` 和 `result.data`，于是成功被当成失败。
+
+- 前端加了一层 `unwrap()`，`{code,data}` 和裸数据两种形状都认；
+- 保存、试画、概览、记录、预设全部走同一层；
+- 保存成功按 `saved` 字段判断，不再看 `code`；
+- 顺手把「冷却/私聊每日」读不出来的问题一起修了（同一个原因）。
+
+### 从人格提取人物设定
+
+之前 `character_appearance` 留空，模型只能猜长相和性别。现在面板「人设一致性」右上角有
+**从人格提取**：
+
+- 读陪伴的人格设定（`llm.persona`，读不到再退 AstrBot 人格）；
+- 检测性别（女孩/女生/少女… vs 男孩/男生/少年…），填进 `character_gender`；
+- 挑出描述长相的分句（头发/眼睛/耳朵/尾巴/身高…），填进 `character_appearance`；
+- 角色名用陪伴的人格名，填进 `character_persona`；
+- 新接口 `POST /Astrbot_Amo_Image/persona/extract`，只读人格、不产生额外模型调用。
+
+测试 80 passed。
+
 ## 0.12.0（多后端 + 配置面板 + 性别/人格/日程修正）
 
 之前只有一个「OpenAI 兼容 /images/generations」的实现，换个后端就得改代码；
