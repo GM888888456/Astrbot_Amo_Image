@@ -43,7 +43,7 @@ except Exception:  # pragma: no cover - 没装 aiohttp 时退回线程 + urllib
     aiohttp = None  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.5.0"
+PLUGIN_VERSION = "0.5.1"
 
 DATA_PLUGIN_NAMES = (
     "Astr_Amo_data",
