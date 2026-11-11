@@ -747,8 +747,27 @@ class AmoImagePlugin(Star):
 
     # ---------- 手动换装（/换一套衣服）----------
 
+    def _plugin_data_dir(self):
+        """上架规范：持久化数据放 data/plugin_data/<插件名>/，不落在插件安装目录。"""
+        name = os.path.basename(self.plugin_dir) or "Astrbot_Amo_Image"
+        for getter in ("get_plugin_data_dir", "plugin_data_dir"):
+            try:
+                value = getattr(self.context, getter, None)
+                value = value() if callable(value) else value
+                value = str(value or "").strip()
+                if value:
+                    return value
+            except Exception:
+                continue
+        return os.path.join(os.path.dirname(self.plugin_dir), "plugin_data", name)
+
     def _look_state_path(self):
-        return os.path.join(self.plugin_dir, "look_state.json")
+        root = self._plugin_data_dir()
+        try:
+            os.makedirs(root, exist_ok=True)
+        except Exception:
+            pass
+        return os.path.join(root, "look_state.json")
 
     def _load_look_state(self):
         if isinstance(self._look_state, dict):

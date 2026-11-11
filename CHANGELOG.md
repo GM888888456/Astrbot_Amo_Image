@@ -1,5 +1,15 @@
 # Changelog
 
+
+
+## 1.6.1（持久化路径合规）
+
+- 按 AstrBot 上架审核意见：手动换装记录 `look_state.json` 原先写在插件安装目录
+  （`self.plugin_dir`），违反「持久化数据必须保存到 `data/plugin_data/<插件名>/`」的规定。
+- 新增 `_plugin_data_dir()`：优先用上下文提供的插件数据目录（`get_plugin_data_dir` /
+  `plugin_data_dir`，4.29.x 暂无则回退），否则拼 `<plugin_dir>/../plugin_data/<插件名>`，
+  并 `makedirs` 兜底；`look_state.json` 改写到该目录下，其余逻辑不变。
+
 ## 版本号规则调整（0.16.0 → 1.6.0）
 
 按新规则重排：第二位、第三位只能是 0-9，逢十进一；首位不限、可以是多位数。
