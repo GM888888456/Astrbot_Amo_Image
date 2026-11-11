@@ -32,6 +32,9 @@ const els = {
   statusMeta: $("statusMeta"),
   preset: $("preset"),
   presetHint: $("presetHint"),
+  model: $("model"),
+  modelHint: $("modelHint"),
+  fetchModels: $("fetchModels"),
   save: $("save"),
   saveHint: $("saveHint"),
   prompt: $("prompt"),
@@ -100,7 +103,9 @@ function showTab(name) {
   document.querySelectorAll(".pane").forEach((pane) => {
     pane.hidden = pane.id !== "pane-" + name;
   });
-  if (name === "config") loadConfig();
+  if (name === "config") {
+    loadConfig().then(() => loadModels());
+  }
 }
 
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -163,6 +168,25 @@ async function refresh() {
   }
 }
 
+async function loadModels(keepValue) {
+  els.modelHint.textContent = "拉取中…";
+  try {
+    const result = unwrap(await get("models")) || {};
+    const models = result.models || [];
+    if (!models.length) {
+      els.modelHint.textContent = result.message || result.msg || "没拉到模型，检查 api_base / key";
+      return;
+    }
+    const current = keepValue || $("model").value;
+    $("model").innerHTML = models.map((name) =>
+      '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + "</option>").join("");
+    if (current && models.includes(current)) $("model").value = current;
+    els.modelHint.textContent = "共 " + models.length + " 个模型";
+  } catch (err) {
+    els.modelHint.textContent = "拉取失败：" + String(err.message || err);
+  }
+}
+
 async function loadPresets() {
   try {
     const result = unwrap(await get("presets"));
@@ -183,6 +207,7 @@ els.preset.addEventListener("change", () => {
   if (item.model) $("model").value = item.model;
   syncCustomBlock();
   els.presetHint.textContent = "已填入 " + (item.name || item.id) + "，密钥要自己填";
+  loadModels();
 });
 
 async function loadConfig() {
@@ -191,7 +216,16 @@ async function loadConfig() {
     const data = result || {};
     TEXT_FIELDS.forEach((key) => {
       const el = $(key);
-      if (el && data[key] != null) el.value = String(data[key]);
+      if (!el || data[key] == null) return;
+      if (key === "model" && el.tagName === "SELECT") {
+        const value = String(data[key]);
+        if (value && !Array.from(el.options).some((opt) => opt.value === value)) {
+          el.appendChild(new Option(value, value));
+        }
+        el.value = value;
+        return;
+      }
+      el.value = String(data[key]);
     });
     NUMBER_FIELDS.forEach((key) => {
       const el = $(key);
@@ -231,6 +265,7 @@ function collectConfig() {
     const el = $(key);
     if (el) payload[key] = !!el.checked;
   });
+  payload.model = $("model").value;
   payload.provider = $("provider").value;
   payload.character_gender = $("character_gender").value;
   payload.camera_mode = $("camera_mode").value;
@@ -241,7 +276,13 @@ function collectConfig() {
   return payload;
 }
 
+els.fetchModels.addEventListener("click", () => loadModels());
+
 els.save.addEventListener("click", async () => {
+  if (!$("model").value) {
+    els.saveHint.textContent = "先拉取模型并选一个";
+    return;
+  }
   els.save.disabled = true;
   els.saveHint.textContent = "保存中…";
   try {

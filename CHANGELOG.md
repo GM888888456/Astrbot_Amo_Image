@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.15.0（模型列表拉取）
+
+手填模型名太容易错一个字就 400/404，改成从后端拉列表、下拉选择。
+
+- 新增 `GET /Astrbot_Amo_Image/models`：
+  - OpenAI 兼容（openai / openai_chat）：`GET {api_base}/models`，Bearer 认证；
+  - Gemini：`GET {api_base}/models`，`x-goog-api-key`，优先筛出名字带 image 的模型；
+  - custom 后端没有标准列表，接口明确提示手填；
+- 面板 model 从输入框改成下拉框，配「拉取」按钮；切到配置页、换预设都会自动拉；
+- 拉取失败会显示原因（401 / 404 / 超时），不会静默；
+- 保存时如果没选模型，会提示先拉取，避免空模型提交。
+
+测试 90 passed。
+
 ## 0.14.0（按日程穿搭出图）
 
 之前服装来自插件自己的服装池（按天哈希），和陪伴日程里「今天穿什么」是两套东西。

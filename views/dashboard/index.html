@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f4f4f6" />
   <title>我想和你度日常</title>
-  <link rel="stylesheet" href="./style.css?v=0.14.0" />
+  <link rel="stylesheet" href="./style.css?v=0.15.0" />
 </head>
 <body>
   <div class="wrap">
@@ -58,7 +58,14 @@
         </div>
         <div class="field"><label>api_base</label><input id="api_base" spellcheck="false" placeholder="https://api.openai.com/v1" /></div>
         <div class="field"><label>api_key</label><input id="api_key" type="password" spellcheck="false" placeholder="留空 = 不修改" /></div>
-        <div class="field"><label>model</label><input id="model" spellcheck="false" placeholder="gpt-image-1 / Kwai-Kolors/Kolors" /></div>
+        <div class="field">
+          <label>model（拉取后选择）</label>
+          <div class="row">
+            <select id="model" class="grow"></select>
+            <button class="link" id="fetchModels" type="button">拉取</button>
+          </div>
+          <div class="meta" id="modelHint">切到配置页会自动拉取</div>
+        </div>
         <div class="grid2">
           <div class="field"><label>size</label><input id="size" spellcheck="false" placeholder="1024x1024" /></div>
           <div class="field"><label>aspect_ratio</label><input id="aspect_ratio" spellcheck="false" placeholder="留空自动" /></div>

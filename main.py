@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
     )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.14.0"
+PLUGIN_VERSION = "0.15.0"
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
@@ -626,6 +626,27 @@ class AmoImagePlugin(Star):
                 pass
             raise APIError(exc.code, detail) from exc
 
+    async def _get_json(self, url: str, headers=None):
+        """GET 一个 JSON（拉模型列表用）；失败抛异常，由调用方转成提示。"""
+        timeout = max(10.0, self._float("timeout", 90.0))
+        headers = dict(headers or self._headers())
+        if aiohttp is not None:
+            client_timeout = aiohttp.ClientTimeout(total=timeout)
+            async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                async with session.get(url, headers=headers) as resp:
+                    text = await resp.text()
+                    if resp.status >= 400:
+                        raise APIError(resp.status, text[:300])
+                    return json.loads(text)
+        return await asyncio.to_thread(self._get_json_blocking, url, timeout, headers)
+
+    def _get_json_blocking(self, url: str, timeout: float, headers=None):
+        import urllib.request
+
+        req = urllib.request.Request(url, headers=dict(headers or self._headers()))
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            return json.loads(resp.read().decode("utf-8"))
+
     async def _download(self, url: str) -> bytes:
         timeout = max(10.0, self._float("timeout", 90.0))
         if aiohttp is not None:
@@ -994,6 +1015,7 @@ class AmoImagePlugin(Star):
             ("/config", self.api_config, ["GET"]),
             ("/config/save", self.api_save_config, ["POST"]),
             ("/presets", self.api_presets, ["GET"]),
+            ("/models", self.api_models, ["GET"]),
             ("/persona/extract", self.api_persona_extract, ["POST"]),
             ("/test", self.api_test, ["POST"]),
         ]
@@ -1101,6 +1123,60 @@ class AmoImagePlugin(Star):
         data["api_key"] = ""
         data["api_key_masked"] = self._mask_key()
         return self._json({"code": 0, "data": data})
+
+    @staticmethod
+    def _collect_models(payload):
+        """从各家 /models 响应里收集模型名：data[].id、models[].name、纯字符串数组。"""
+        items = []
+        if isinstance(payload, dict):
+            for key in ("data", "models", "result", "items"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    items = value
+                    break
+        elif isinstance(payload, list):
+            items = payload
+        names = []
+        for item in items:
+            if isinstance(item, str):
+                name = item
+            elif isinstance(item, dict):
+                name = item.get("id") or item.get("name") or item.get("model") or ""
+                if isinstance(name, str) and name.startswith("models/"):
+                    name = name.split("/", 1)[1]
+            else:
+                continue
+            name = str(name or "").strip()
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    async def api_models(self):
+        """拉当前后端的模型列表，面板里只让选、不让手填。"""
+        provider = self._provider().name
+        base = str(self._cfg("api_base", "") or "").strip().rstrip("/")
+        key = str(self._cfg("api_key", "") or "").strip()
+        if provider == "custom":
+            return self._json({"code": 1, "message": "自定义后端没有模型列表，请在配置里手填 model"})
+        if not base:
+            return self._json({"code": 1, "message": "先填 api_base"})
+        try:
+            if provider == "gemini":
+                url = base + "/models"
+                headers = {"x-goog-api-key": key} if key else {}
+                payload = await self._get_json(url, headers)
+                names = [name for name in self._collect_models(payload) if "image" in name.lower()]
+                if not names:
+                    names = self._collect_models(payload)
+            else:
+                url = base + "/models"
+                headers = self._headers()
+                payload = await self._get_json(url, headers)
+                names = self._collect_models(payload)
+            return self._json({"code": 0, "data": {"provider": provider, "models": names}})
+        except Exception as exc:
+            logger.warning("[amo_image] 拉模型列表失败: %s" % exc)
+            return self._json({"code": 1, "message": "拉取失败：%s" % exc})
 
     async def api_presets(self):
         """面板里的后端预设，只填 base/model，不动密钥。"""

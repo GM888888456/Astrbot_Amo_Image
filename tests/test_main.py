@@ -902,3 +902,33 @@ def test_schedule_outfit_absent_falls_back_to_pool():
     p._companion = lambda: FakeCompanion()
     text = p._final_prompt("自拍")
     assert "今天的样子：穿JK 制服" in text
+
+
+def test_collect_models_shapes():
+    assert main.AmoImagePlugin._collect_models({"data": [{"id": "a"}, {"id": "b"}]}) == ["a", "b"]
+    assert main.AmoImagePlugin._collect_models({"models": [{"name": "models/x"}]}) == ["x"]
+    assert main.AmoImagePlugin._collect_models(["a", "a", "b"]) == ["a", "b"]
+
+
+def test_api_models_returns_list():
+    p = make_plugin(api_base="https://x.test/v1")
+
+    async def fake_get(url, headers=None):
+        assert url == "https://x.test/v1/models"
+        return {"data": [{"id": "gpt-image-1"}, {"id": "flux-schnell"}]}
+
+    p._get_json = fake_get
+    out = collect(p.api_models())
+    assert out["code"] == 0
+    assert out["data"]["models"] == ["gpt-image-1", "flux-schnell"]
+
+
+def test_api_models_reports_failure():
+    p = make_plugin(api_base="https://x.test/v1")
+
+    async def boom(url, headers=None):
+        raise RuntimeError("401")
+
+    p._get_json = boom
+    out = collect(p.api_models())
+    assert out["code"] == 1 and "拉取失败" in out["message"]
