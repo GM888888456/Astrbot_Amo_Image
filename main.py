@@ -21,6 +21,7 @@ import os
 import re
 import tempfile
 import time
+import unicodedata
 import zlib
 from collections import deque
 
@@ -52,7 +53,7 @@ class APIError(RuntimeError):
 
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.10.0"
+PLUGIN_VERSION = "0.11.0"
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
@@ -73,6 +74,33 @@ DEFAULT_NEGATIVE_PROMPT = (
 
 # 「换一套衣服」这类手动换装：整句就是指令，不能当成生图提示词
 OUTFIT_COMMANDS = ("换一套衣服", "换套衣服", "换身衣服", "换衣服", "换一件衣服")
+
+# 内容边界：私聊只拦露骨裸体 / 性器官 / 性行为 / 未成年相关；
+# 群聊额外拦「只穿内衣 / 比基尼 / 情趣内衣」这类。这是一层关键词防线，
+# 挡不住谐音、外语、拆字和极端变体，别当唯一保险。
+EXPLICIT_TERMS = (
+    "裸体", "裸體", "全裸", "赤裸", "一丝不挂", "未着寸缕",
+    "露阴", "阴部", "私处", "生殖器", "下体裸露",
+    "性交", "做爱", "口交", "肛交", "性行为", "自慰", "射精",
+    "porn", "nude", "naked", "genital", "explicitsex",
+)
+MINOR_TERMS = (
+    "幼女", "未成年", "儿童色情", "未成年性", "childporn", "loli", "萝莉",
+)
+INJECTION_TERMS = (
+    "忽略之前", "忽略以上", "ignoreprevious", "ignoreabove",
+    "systemprompt", "系统提示", "越狱", "jailbreak", "不要遵守",
+)
+
+# 群聊额外档：内衣 / 比基尼 / 走光。文本已归一化（小写、去空白），
+# 所以英文词也要写成连写形式。
+_GROUP_BLOCK_PATTERNS = (
+    re.compile(r"(只|仅|单)穿.{0,6}(内衣|泳衣|泳装|比基尼)"),
+    re.compile(r"(穿|着).{0,4}内衣"),
+    re.compile(r"内衣.{0,4}(照|写真|自拍)"),
+    re.compile(r"情趣内衣|蕾丝内衣|比基尼|bikini|lingerie"),
+    re.compile(r"露乳|露臀|走光|underwearonly|swimsuitonly"),
+)
 
 DATA_PLUGIN_NAMES = (
     "Astr_Amo_data",
@@ -245,6 +273,7 @@ class AmoImagePlugin(Star):
         self.config = config or {}
         self._last_call = {}   # uid -> 上次生图时间
         self._daily = {}       # uid -> [日期字符串, 次数]
+        self._daily_group = {} # umo -> [日期字符串, 次数]
         self._history = deque(maxlen=40)   # 最近几次生图（面板用）
         self._style_cache = {}             # endpoint -> 试通过的参数风格
         self._negative_ok = {}             # endpoint -> 后端认不认 negative_prompt
@@ -413,12 +442,52 @@ class AmoImagePlugin(Star):
         except Exception:
             return False
 
-    def _is_at_me(self, event) -> bool:
-        try:
-            if bool(getattr(event, "is_at_or_wake_command", False)):
-                return True
-        except Exception:
-            pass
+    @staticmethod
+    def _group_from_umo(umo) -> bool:
+        """分享入口没有 event，只能从 UMO 判断是不是群聊。"""
+        return "groupmessage" in str(umo or "").lower()
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        """归一化：全角转半角、转小写、去掉空白和零宽字符，防「裸 体」这类拆字。"""
+        value = unicodedata.normalize("NFKC", str(text or "")).lower()
+        return re.sub(r"[\s\u200b\u200c\u200d\ufeff]+", "", value)
+
+    def _safe_text(self, text: str, group: bool = False) -> bool:
+        """输入边界：返回 True 表示可以画。
+
+        私聊只拦露骨裸体 / 性器官 / 性行为 / 未成年相关；
+        群聊额外拦「只穿内衣 / 比基尼 / 情趣内衣」这类。
+        """
+        if not self._bool("safe_mode", True):
+            return True
+        raw = self._normalize_text(text)
+        if not raw:
+            return True
+        if len(raw) > 600:
+            return False
+        for term in EXPLICIT_TERMS + MINOR_TERMS + INJECTION_TERMS:
+            if self._normalize_text(term) in raw:
+                return False
+        if group and any(pattern.search(raw) for pattern in _GROUP_BLOCK_PATTERNS):
+            return False
+        return True
+
+    def _clean_context(self, lines, group: bool = False):
+        """记忆上下文也要过边界：群友在聊天里塞「画裸体」不能顺着拼进提示词。"""
+        return [x for x in (lines or []) if self._safe_text(x, group)]
+
+    def _is_at_me(self, event, strict: bool = False) -> bool:
+        """是否真的 @ 了机器人。
+
+        strict=True 只认消息里的 At 组件，不认唤醒前缀——群里用唤醒词不算 @。
+        """
+        if not strict:
+            try:
+                if bool(getattr(event, "is_at_or_wake_command", False)):
+                    return True
+            except Exception:
+                pass
         try:
             self_id = str(event.get_self_id() or "")
             message = getattr(getattr(event, "message_obj", None), "message", None) or []
@@ -429,33 +498,55 @@ class AmoImagePlugin(Star):
             pass
         return False
 
-    def _quota_ok(self, uid: str) -> tuple:
-        """冷却 + 每日次数。返回 (ok, 提示)。"""
+    def _quota_ok(self, uid: str, umo: str = "", group: bool = False) -> tuple:
+        """冷却 + 每日次数。私聊默认不限量，群聊按群每天 20 张。"""
         now = time.time()
         cooldown = max(0, self._int("cooldown_seconds", 30))
         last = self._last_call.get(uid, 0)
         if cooldown and last and now - last < cooldown:
             return (False, "刚画过，等我缓一下")
-        daily = max(0, self._int("daily_limit", 20))
-        if daily:
-            today = time.strftime("%Y-%m-%d")
+        today = time.strftime("%Y-%m-%d")
+        if group:
+            limit = max(0, self._int("group_daily_limit", 20))
+            key = str(umo or "")
+            if limit and key:
+                record = self._daily_group.get(key) or [today, 0]
+                if record[0] != today:
+                    record = [today, 0]
+                if record[1] >= limit:
+                    self._daily_group[key] = record
+                    return (False, "这个群今天画得够多啦，明天再画")
+                self._daily_group[key] = record
+            return (True, "")
+        limit = max(0, self._int("private_daily_limit", 0))
+        if limit:
             record = self._daily.get(uid) or [today, 0]
             if record[0] != today:
                 record = [today, 0]
-            if record[1] >= daily:
+            if record[1] >= limit:
                 self._daily[uid] = record
                 return (False, "今天画得够多啦，明天再画")
             self._daily[uid] = record
         return (True, "")
 
-    def _mark_call(self, uid: str):
-        self._last_call[uid] = time.time()
+    def _mark_call(self, uid: str, umo: str = "", group: bool = False, cooldown: bool = True):
+        """记一次出图。cooldown=False 用于陪伴主动分享：算额度，但不占用户的冷却。"""
+        if cooldown:
+            self._last_call[uid] = time.time()
         today = time.strftime("%Y-%m-%d")
         record = self._daily.get(uid) or [today, 0]
         if record[0] != today:
             record = [today, 0]
         record[1] = int(record[1]) + 1
         self._daily[uid] = record
+        if group:
+            key = str(umo or "")
+            if key:
+                grecord = self._daily_group.get(key) or [today, 0]
+                if grecord[0] != today:
+                    grecord = [today, 0]
+                grecord[1] = int(grecord[1]) + 1
+                self._daily_group[key] = grecord
 
     # ---------- 后端 ----------
 
@@ -816,14 +907,26 @@ class AmoImagePlugin(Star):
         prompt = str(prompt or "").strip()
         if not prompt:
             return None
+        group = self._group_from_umo(umo)
+        if not self._safe_text(prompt, group):
+            logger.info("[amo_image] draw_for 输入被内容边界拦下")
+            return None
+        ok, note = self._quota_ok(str(uid or ""), str(umo or ""), group)
+        if not ok:
+            logger.info("[amo_image] draw_for 跳过：%s" % (note or "quota"))
+            return None
         try:
-            context_lines = await self._context_lines(str(umo or ""), str(uid or ""))
+            context_lines = self._clean_context(
+                await self._context_lines(str(umo or ""), str(uid or "")), group
+            )
             final_prompt = self._final_prompt(prompt, context_lines)
             data = await self._generate(final_prompt)
         except Exception as exc:
             logger.warning("[amo_image] draw_for 失败: %s" % exc)
             return None
         if data:
+            # 主动分享算群额度，但不占用户的下一次冷却
+            self._mark_call(str(uid or ""), str(umo or ""), group, cooldown=False)
             self._record(uid or "share", prompt, True, 0, len(data))
         return data or None
 
@@ -882,6 +985,14 @@ class AmoImagePlugin(Star):
                 total += int(record[1])
         return total
 
+    def _today_group_used(self) -> int:
+        today = time.strftime("%Y-%m-%d")
+        total = 0
+        for record in self._daily_group.values():
+            if isinstance(record, list) and len(record) == 2 and record[0] == today:
+                total += int(record[1])
+        return total
+
     async def api_status(self):
         return self._json({
             "code": 0,
@@ -896,8 +1007,11 @@ class AmoImagePlugin(Star):
                 "allow_private": self._bool("allow_private", True),
                 "allow_group": self._bool("allow_group", True),
                 "cooldown_seconds": self._int("cooldown_seconds", 30),
-                "daily_limit": self._int("daily_limit", 20),
+                "private_daily_limit": self._int("private_daily_limit", 0),
+                "group_daily_limit": self._int("group_daily_limit", 20),
+                "safe_mode": self._bool("safe_mode", True),
                 "users_today": self._today_used(),
+                "groups_today": self._today_group_used(),
                 "calls_total": self._calls_total,
                 "history_size": len(self._history),
                 "look": self._daily_look(),
@@ -913,7 +1027,8 @@ class AmoImagePlugin(Star):
             "enable", "api_base", "model", "size", "n", "quality", "style", "timeout",
             "character_appearance", "use_memory_context", "memory_context_limit",
             "allow_private", "allow_group", "require_at_in_group", "quote_in_group",
-            "keywords", "cooldown_seconds", "daily_limit", "reply_prefix", "error_reply",
+            "keywords", "cooldown_seconds", "private_daily_limit", "group_daily_limit",
+            "safe_mode", "blocked_reply", "reply_prefix", "error_reply",
             "character_hairstyle", "character_outfits", "outfit_change_keywords",
             "outfit_change_cooldown_minutes", "lock_scene_to_schedule", "negative_prompt",
         ]
@@ -1005,7 +1120,7 @@ class AmoImagePlugin(Star):
                 return
             if (not group) and not self._bool("allow_private", True):
                 return
-            if group and self._bool("require_at_in_group", False) and not self._is_at_me(event):
+            if group and self._bool("require_at_in_group", True) and not self._is_at_me(event, strict=True):
                 return
             if self._outfit_request(text):
                 try:
@@ -1029,6 +1144,10 @@ class AmoImagePlugin(Star):
                     yield event.plain_result("想画什么？说具体点")
                     event.stop_event()
                     return
+            if not self._safe_text(prompt, group):
+                yield event.plain_result(str(self._cfg("blocked_reply", "这个画不了，换个描述吧")))
+                event.stop_event()
+                return
             async for result in self._draw(event, prompt):
                 yield result
             event.stop_event()
@@ -1037,14 +1156,18 @@ class AmoImagePlugin(Star):
 
     async def _draw(self, event, prompt: str):
         uid = str(getattr(event, "get_sender_id", lambda: "")() or "")
-        ok, note = self._quota_ok(uid)
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        group = self._is_group(event)
+        if not self._safe_text(prompt, group):
+            yield event.plain_result(str(self._cfg("blocked_reply", "这个画不了，换个描述吧")))
+            return
+        ok, note = self._quota_ok(uid, umo, group)
         if not ok:
             yield event.plain_result(note or str(self._cfg("error_reply", "画不出来，等会儿再试试")))
             return
-        umo = str(getattr(event, "unified_msg_origin", "") or "")
-        ctx = await self._context_lines(umo, uid)
+        ctx = self._clean_context(await self._context_lines(umo, uid), group)
         final_prompt = self._final_prompt(prompt, ctx)
-        self._mark_call(uid)
+        self._mark_call(uid, umo, group)
         started = time.time()
         try:
             data = await self._generate(final_prompt)
@@ -1070,17 +1193,23 @@ class AmoImagePlugin(Star):
         action = args[0].lower() if args else "status"
         if action in ("status", "状态"):
             uid = str(getattr(event, "get_sender_id", lambda: "")() or "")
+            umo = str(getattr(event, "unified_msg_origin", "") or "")
             today = time.strftime("%Y-%m-%d")
             record = self._daily.get(uid) or [today, 0]
             used = record[1] if record[0] == today else 0
-            limit = self._int("daily_limit", 20)
+            private_limit = self._int("private_daily_limit", 0)
+            group_record = self._daily_group.get(umo) or [today, 0]
+            group_used = group_record[1] if group_record[0] == today else 0
+            group_limit = self._int("group_daily_limit", 20)
             yield event.plain_result(
-                "生图：%s\n后端：%s\n模型：%s\n今日：%s/%s\n今天穿：%s" % (
+                "生图：%s\n后端：%s\n模型：%s\n私聊今日：%s/%s\n本群今日：%s/%s\n今天穿：%s" % (
                     "开" if self._bool("enable", True) else "关",
                     str(self._cfg("api_base", "") or "未配置"),
                     str(self._cfg("model", "") or "-"),
                     used,
-                    limit if limit else "不限",
+                    private_limit if private_limit else "不限",
+                    group_used,
+                    group_limit if group_limit else "不限",
                     self._daily_look(),
                 )
             )

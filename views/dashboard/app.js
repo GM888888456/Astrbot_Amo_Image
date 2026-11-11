@@ -73,7 +73,9 @@ function renderStatus(data) {
     "私聊" + (data.allow_private ? "开" : "关"),
     "群聊" + (data.allow_group ? "开" : "关"),
     "冷却 " + (data.cooldown_seconds ?? 0) + "s",
-    "日限 " + ((data.daily_limit ?? 0) || "不限"),
+    "私聊日限 " + ((data.private_daily_limit ?? 0) || "不限"),
+    "群日限 " + ((data.group_daily_limit ?? 0) || "不限") + "/群",
+    "边界 " + (data.safe_mode ? "开" : "关"),
     "运行 " + Math.floor((data.uptime_seconds || 0) / 60) + " 分钟",
     "今天穿 " + (data.look || "—"),
   ].join(" · ");

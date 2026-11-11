@@ -82,6 +82,13 @@ class _Meta:
         self.star_cls = star
 
 
+class At:
+    """AstrBot 的 @ 组件，用来测「群里必须真 @」的判定。"""
+
+    def __init__(self, qq="99999"):
+        self.qq = qq
+
+
 class _Event:
     def __init__(self, text="", private=True, at=False, uid="10001", umo="umo", message=None):
         self.message_str = text
@@ -89,7 +96,10 @@ class _Event:
         self._at = at
         self._uid = uid
         self.unified_msg_origin = umo
-        self.message_obj = types.SimpleNamespace(message_id="mid-1", message=message or [])
+        base_message = list(message or [])
+        if at:
+            base_message.append(At("99999"))
+        self.message_obj = types.SimpleNamespace(message_id="mid-1", message=base_message)
         self.is_at_or_wake_command = at
         self.results = []
         self.stopped = False

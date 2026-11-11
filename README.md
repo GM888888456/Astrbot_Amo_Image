@@ -9,13 +9,16 @@
 给 Amo 做生图联动的第三个插件：聊天里说一句「画一张……」，她按人设把画面画出来。
 它只负责画图，不参与聊天判定、不改 AstrBot 核心链路。
 
-## 0.10.0 换装冷却与手动换装
+## 0.11.0 内容边界与群聊限额
 
 - 发型固定（`character_hairstyle`）；服装按天固定（`character_outfits`，日程里换衣服才换套）；
 - 换装有冷却（`outfit_change_cooldown_minutes`，默认 60 分钟），连着的两条换装日程只算一次；
 - 服装池留空用内置保底池，不会出现没写服装的提示词；
 - 支持负面提示词（`negative_prompt`），后端不认会自动去掉重试；
-- 发「换一套衣服」或 `/amoimage outfit` 手动换下一套。
+- 发「换一套衣服」或 `/amoimage outfit` 手动换下一套；
+- 私聊不限量（`private_daily_limit=0`），群聊每群每天 20 张（`group_daily_limit`）；
+- 群聊必须真正 @ 机器人，唤醒词不再算；
+- `safe_mode` 分级内容边界，`draw_for` 和记忆上下文同样受限。
 
 
 ## 0.8.0 公开出图接口
@@ -86,7 +89,7 @@
 | `enable` | `true` | 总开关 |
 | `api_base` | `https://api.openai.com/v1` | OpenAI 兼容根地址，请求 `{api_base}/images/generations` |
 | `api_key` | 空 | 只存本机配置，不会写进日志 |
-| `model` | `gpt-image-1` | 后端支持的模型名 |
+| `model` | 空 | 后端支持的模型名；留空用后端默认 |
 | `size` | `1024x1024` | 尺寸 |
 | `n` | `1` | 每次张数 |
 | `quality` / `style` | 空 | 留空就不发这个字段，兼容不支持的旧后端 |
@@ -95,18 +98,36 @@
 | `use_memory_context` | `true` | 是否用数据插件补上下文 |
 | `memory_context_limit` | `6` | 取几条对话 |
 | `allow_private` / `allow_group` | `true` | 私聊 / 群聊是否可用 |
-| `require_at_in_group` | `false` | 群里必须 @ 才画 |
+| `require_at_in_group` | `true` | 群里必须真 @ 机器人才画（唤醒词不算） |
 | `quote_in_group` | `true` | 群里发图时引用原消息；私聊永远不引用 |
 | `keywords` | 画一张 / 画个 / 帮我画 / 生成图片 / 来张图 / 画张 | 触发词 |
 | `cooldown_seconds` | `30` | 同一人冷却 |
-| `daily_limit` | `20` | 每人每天次数，`0` 不限 |
+| `private_daily_limit` | `0` | 私聊每人每天次数，`0` 不限 |
+| `group_daily_limit` | `20` | 每个群每天次数，`0` 不限 |
+| `safe_mode` | `true` | 内容边界：私聊拦露骨裸体/性器官/性行为/未成年相关，群聊额外拦只穿内衣/比基尼 |
+| `blocked_reply` | 这个画不了，换个描述吧 | 命中内容边界时的回复 |
 | `reply_prefix` | 空 | 发图前带一句话 |
 | `error_reply` | 画不出来，等会儿再试试 | 失败话术 |
+
+## 内容边界
+
+`safe_mode` 打开时：
+
+- 私聊：只拦露骨裸体、性器官、性行为、未成年相关；比基尼、内衣这类日常向描述放行；
+- 群聊：额外拦「只穿内衣 / 内衣照 / 比基尼 / 情趣内衣」；
+- 记忆上下文、`draw_for` 分享入口走同一套判定，群友往聊天里塞「画裸体」不会顺着拼进提示词；
+- 提示词注入词（「忽略之前」「system prompt」「越狱」）一律拦。
+
+这是一层关键词 + 正则防线，挡不住谐音、外语、拆字和极端变体；要更稳需要图片返回后加 NSFW 输出检查，
+插件不内置这类模型，避免偷跑第三方服务。
+
+「必须真 @」依赖消息里的 `At` 组件。QQ 没问题；Lark / Telegram 这类平台如果 mention 不走 `At`，
+可能出现「@ 了也不触发」，到时候要按平台补一个判定分支。
 
 ## 用法
 
 - 私聊：`画一张 下雨天的便利店门口`
-- 群聊：`@机器人 画一张 她在天台看晚霞`
+- 群聊：`@机器人 画一张 她在天台看晚霞`（必须真 @，唤醒词不算）
 - 命令：`/amoimage status` 看后端与今日额度；`/amoimage draw <提示词>` 手动出图
 
 ## 后端兼容

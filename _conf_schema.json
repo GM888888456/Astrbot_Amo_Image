@@ -86,8 +86,8 @@
   "require_at_in_group": {
     "type": "bool",
     "description": "群里必须 @ 才响应",
-    "default": false,
-    "hint": "打开后群里只有 @机器人 才生图，避免刷屏。"
+    "default": true,
+    "hint": "群聊必须真正 @ 机器人才响应（唤醒词不算）；默认开启，避免陌生人刷图。"
   },
   "quote_in_group": {
     "type": "bool",
@@ -114,11 +114,29 @@
     "default": 30,
     "hint": "同一个人两次生图之间的最小间隔，0 表示不限制。"
   },
-  "daily_limit": {
+  "safe_mode": {
+    "type": "bool",
+    "description": "内容边界",
+    "default": true,
+    "hint": "私聊只拦露骨裸体 / 性器官 / 性行为 / 未成年相关；群聊额外拦「只穿内衣 / 比基尼 / 情趣内衣」。关闭后不拦，不建议。"
+  },
+  "blocked_reply": {
+    "type": "string",
+    "description": "被拦时的回复",
+    "default": "这个画不了，换个描述吧",
+    "hint": "命中内容边界时回这一句，不会透露具体命中了什么。"
+  },
+  "private_daily_limit": {
     "type": "int",
-    "description": "每人每天次数",
+    "description": "私聊每日次数",
+    "default": 0,
+    "hint": "0=不限量，按人算；私聊仍受「冷却秒数」限制。"
+  },
+  "group_daily_limit": {
+    "type": "int",
+    "description": "群聊每日次数",
     "default": 20,
-    "hint": "按自然日算，0 表示不限。超出会回一句温和的拒绝。"
+    "hint": "按群算，每个群每天最多几张；0=不限。"
   },
   "reply_prefix": {
     "type": "string",
