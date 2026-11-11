@@ -9,7 +9,7 @@
 给 Amo 做生图联动的第三个插件：聊天里说一句「画一张……」，她按人设把画面画出来。
 它只负责画图，不参与聊天判定、不改 AstrBot 核心链路。
 
-## 0.15.1 模型列表兜底
+## 0.16.0 面板服装库
 
 - 发型固定（`character_hairstyle`）；服装按天固定（`character_outfits`，日程里换衣服才换套）；
 - 换装有冷却（`outfit_change_cooldown_minutes`，默认 60 分钟），连着的两条换装日程只算一次；
@@ -29,7 +29,8 @@
 - 0.13.3：拍摄角度分开——拍自己用前置自拍，拍别人/别的东西用第三人称他拍；
 - 0.14.0：服装改成读陪伴日程里的 `outfit`，日程换一套衣服，图里就换一套；
 - 0.15.0：模型改成从后端 `/models` 拉取后选择；
-- 0.15.1：列表里没有图片模型时，保留当前模型并可手填一次。
+- 0.15.1：列表里没有图片模型时，保留当前模型并可手填一次；
+- 0.16.0：面板「试画」换成「服装」，可以直接添衣服、指定今天穿哪件。
 
 
 ## 0.8.0 公开出图接口
@@ -160,7 +161,13 @@
 | `/Astrbot_Amo_Image/status` | GET | 后端、模型、今日用量、累计 |
 | `/Astrbot_Amo_Image/history` | GET | 最近 40 次生图 |
 | `/Astrbot_Amo_Image/config` | GET | 当前配置（密钥只回掩码） |
-| `/Astrbot_Amo_Image/test` | POST | 试画，返回 `data:image/png;base64` |
+| `/Astrbot_Amo_Image/models` | GET | 拉后端模型列表 |
+| `/Astrbot_Amo_Image/persona/extract` | POST | 从人格提取性别/外观/角色名 |
+| `/Astrbot_Amo_Image/wardrobe` | GET | 服装库（数据在陪伴插件，未安装时提示） |
+| `/Astrbot_Amo_Image/wardrobe/save` | POST | 添加/修改一件衣服 |
+| `/Astrbot_Amo_Image/wardrobe/delete` | POST | 删除一件 |
+| `/Astrbot_Amo_Image/wardrobe/wear` | POST | 让她今天穿这件 |
+| `/Astrbot_Amo_Image/test` | POST | 试画（面板已不提供入口，保留给调试） |
 
 ## 测试
 

@@ -935,3 +935,37 @@ def test_api_models_reports_failure():
     p._get_json = boom
     out = collect(p.api_models())
     assert out["code"] == 1 and "拉取失败" in out["message"]
+
+
+def test_wardrobe_routes_registered():
+    p = make_plugin()
+    routes = [item["route"] for item in p.context.web_apis]
+    assert "/Astrbot_Amo_Image/wardrobe" in routes
+    assert "/Astrbot_Amo_Image/wardrobe/save" in routes
+    assert "/Astrbot_Amo_Image/wardrobe/wear" in routes
+
+
+def test_wardrobe_proxy_reports_missing_companion():
+    p = make_plugin()
+    p._companion = lambda: None
+    out = collect(p.api_wardrobe())
+    assert out.get("code") == 1
+    assert "陪伴" in out.get("message", "")
+
+
+def test_wardrobe_proxy_delegates():
+    p = make_plugin()
+
+    class FakeWardrobe:
+        def __init__(self):
+            self.called = 0
+
+        async def api_wardrobe(self):
+            self.called += 1
+            return {"code": 0, "data": {"items": [{"id": "w1", "name": "红裙子"}]}}
+
+    fake = FakeWardrobe()
+    p._companion = lambda: fake
+    out = collect(p.api_wardrobe())
+    assert out["data"]["items"][0]["name"] == "红裙子"
+    assert fake.called == 1

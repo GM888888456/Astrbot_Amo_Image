@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
     )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.15.1"
+PLUGIN_VERSION = "0.16.0"
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
@@ -1017,6 +1017,10 @@ class AmoImagePlugin(Star):
             ("/presets", self.api_presets, ["GET"]),
             ("/models", self.api_models, ["GET"]),
             ("/persona/extract", self.api_persona_extract, ["POST"]),
+            ("/wardrobe", self.api_wardrobe, ["GET", "POST"]),
+            ("/wardrobe/save", self.api_wardrobe_save, ["POST"]),
+            ("/wardrobe/delete", self.api_wardrobe_delete, ["POST"]),
+            ("/wardrobe/wear", self.api_wardrobe_wear, ["POST"]),
             ("/test", self.api_test, ["POST"]),
         ]
         for path, handler, methods in routes:
@@ -1289,6 +1293,37 @@ class AmoImagePlugin(Star):
             conf = getattr(companion, "config", None) or {}
             name = str(conf.get("persona_name") or conf.get("bot_name") or "").strip()
         return name
+
+    # ---------- 服装库（数据在陪伴插件，这里只做面板代理）----------
+
+    async def _companion_call(self, name, payload=None):
+        """调陪伴插件上的同名接口；没装就直接说清楚。"""
+        companion = self._companion()
+        handler = getattr(companion, name, None) if companion is not None else None
+        if not callable(handler):
+            return self._fail("没装陪伴插件（Astrbot_Amo_forever），服装库在它那边")
+        try:
+            result = await handler()
+        except Exception as exc:
+            logger.warning("[amo_image] 转发 %s 失败: %s" % (name, exc))
+            return self._fail("陪伴插件处理失败：%s" % exc)
+        return result if isinstance(result, (dict, list)) else self._fail("陪伴插件返回异常")
+
+    def _wardrobe_payload(self, payload):
+        """面板已经把 body 交给陪伴的 _body()，这里只做兜底。"""
+        return payload if isinstance(payload, dict) else {}
+
+    async def api_wardrobe(self):
+        return await self._companion_call("api_wardrobe")
+
+    async def api_wardrobe_save(self):
+        return await self._companion_call("api_wardrobe_save")
+
+    async def api_wardrobe_delete(self):
+        return await self._companion_call("api_wardrobe_delete")
+
+    async def api_wardrobe_wear(self):
+        return await self._companion_call("api_wardrobe_wear")
 
     async def api_persona_extract(self):
         """从人格设定里提取性别/外观/角色名，填进面板。"""

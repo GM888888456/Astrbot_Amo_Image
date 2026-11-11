@@ -217,3 +217,32 @@ textarea:focus { outline: none; border-color: var(--pink); }
 
 #customBlock { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; border-top: 1px dashed var(--line); }
 #customBlock[hidden] { display: none; }
+
+/* ---------- 服装库（0.16.0） ---------- */
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.chip {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.chip.on { color: var(--pink); border-color: var(--pink); background: var(--pink-soft); }
+
+.list li .wear, .list li .del {
+  border: none;
+  background: transparent;
+  color: var(--pink);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 0 2px;
+  font-family: inherit;
+}
+
+.list li .del { color: var(--muted); }

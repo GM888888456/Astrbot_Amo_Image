@@ -38,12 +38,16 @@ const els = {
   modelManual: $("modelManual"),
   save: $("save"),
   saveHint: $("saveHint"),
-  prompt: $("prompt"),
-  draw: $("draw"),
-  drawHint: $("drawHint"),
-  preview: $("preview"),
-  previewImg: $("previewImg"),
-  previewMeta: $("previewMeta"),
+  wearNow: $("wearNow"),
+  wardrobeMeta: $("wardrobeMeta"),
+  wName: $("wName"),
+  wScenes: $("wScenes"),
+  wGender: $("wGender"),
+  wNote: $("wNote"),
+  wAdd: $("wAdd"),
+  wHint: $("wHint"),
+  wList: $("wList"),
+  wRefresh: $("wRefresh"),
   history: $("history"),
   refresh: $("refresh"),
   customBlock: $("customBlock"),
@@ -106,6 +110,9 @@ function showTab(name) {
   });
   if (name === "config") {
     loadConfig().then(() => loadModels());
+  }
+  if (name === "wardrobe") {
+    loadWardrobe();
   }
 }
 
@@ -315,47 +322,106 @@ els.save.addEventListener("click", async () => {
   }
 });
 
-els.draw.addEventListener("click", async () => {
-  const prompt = (els.prompt.value || "").trim();
-  if (!prompt) { els.drawHint.textContent = "先写点什么"; return; }
-  els.draw.disabled = true;
-  els.drawHint.textContent = "画着呢…";
-  els.preview.hidden = true;
+let scenes = [];
+let selectedScenes = new Set();
+
+function renderScenes() {
+  els.wScenes.innerHTML = scenes.map((scene) =>
+    '<button type="button" class="chip' + (selectedScenes.has(scene.key) ? " on" : "") +
+    '" data-scene="' + scene.key + '">' + escapeHtml(scene.label) + "</button>").join("");
+  els.wScenes.querySelectorAll(".chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const key = chip.dataset.scene;
+      if (selectedScenes.has(key)) selectedScenes.delete(key);
+      else selectedScenes.add(key);
+      renderScenes();
+    });
+  });
+}
+
+function renderWardrobe(data) {
+  scenes = data.scenes || scenes;
+  if (!scenes.length) return;
+  renderScenes();
+  els.wearNow.textContent = data.current || "待定";
+  els.wearNow.className = "pill" + (data.current ? "" : " off");
+  const items = data.items || [];
+  els.wardrobeMeta.textContent = "库里 " + items.length + " 件 · 写入 " + (data.path || "");
+  if (!items.length) {
+    els.wList.innerHTML = '<li class="empty">还没有衣服，先加一件</li>';
+    return;
+  }
+  els.wList.innerHTML = items.map((item) => {
+    const tags = (item.scenes || []).map((key) => {
+      const found = scenes.find((scene) => scene.key === key);
+      return found ? found.label : key;
+    }).join(" / ");
+    const off = item.enabled === false ? " · 已停用" : "";
+    return '<li data-id="' + escapeHtml(item.id) + '">' +
+      '<span class="p">' + escapeHtml(item.name) + "</span>" +
+      '<span class="t">' + escapeHtml(tags + off) + "</span>" +
+      '<button class="link wear" type="button">今天穿</button>' +
+      '<button class="link del" type="button">删</button></li>';
+  }).join("");
+  els.wList.querySelectorAll("li[data-id]").forEach((row) => {
+    const id = row.dataset.id;
+    const wear = row.querySelector(".wear");
+    const del = row.querySelector(".del");
+    if (wear) wear.addEventListener("click", async () => {
+      const name = row.querySelector(".p").textContent;
+      els.wardrobeMeta.textContent = "换装中…";
+      try {
+        const result = unwrap(await post("wardrobe/wear", { name })) || {};
+        els.wardrobeMeta.textContent = result.msg || "换好了";
+        await loadWardrobe();
+      } catch (err) {
+        els.wardrobeMeta.textContent = "换装失败：" + String(err.message || err);
+      }
+    });
+    if (del) del.addEventListener("click", async () => {
+      try {
+        await post("wardrobe/delete", { id });
+        await loadWardrobe();
+      } catch (err) {
+        els.wardrobeMeta.textContent = "删除失败：" + String(err.message || err);
+      }
+    });
+  });
+}
+
+async function loadWardrobe() {
   try {
-    const result = unwrap(await post("test", { prompt })) || {};
-    if (result.image) {
-      els.previewImg.src = result.image;
-      els.previewMeta.textContent = fmtBytes(result.bytes) + " · " + result.ms + "ms";
-      els.preview.hidden = false;
-      els.drawHint.textContent = "画好了";
-    } else {
-      els.drawHint.textContent = result.message || result.error || "没画出来";
-    }
+    const data = unwrap(await get("wardrobe")) || {};
+    renderWardrobe(data);
   } catch (err) {
-    els.drawHint.textContent = String(err.message || err);
+    els.wardrobeMeta.textContent = "读取失败：" + String(err.message || err);
+  }
+}
+
+els.wAdd.addEventListener("click", async () => {
+  const name = (els.wName.value || "").trim();
+  if (name.length < 2) { els.wHint.textContent = "名字太短"; return; }
+  els.wAdd.disabled = true;
+  els.wHint.textContent = "保存中…";
+  try {
+    const result = unwrap(await post("wardrobe/save", {
+      name,
+      scenes: Array.from(selectedScenes),
+      gender: els.wGender.value,
+      note: els.wNote.value,
+    })) || {};
+    els.wHint.textContent = result.msg || "已保存";
+    els.wName.value = "";
+    els.wNote.value = "";
+    await loadWardrobe();
+  } catch (err) {
+    els.wHint.textContent = "保存失败：" + String(err.message || err);
   } finally {
-    els.draw.disabled = false;
-    refresh();
+    els.wAdd.disabled = false;
   }
 });
 
-els.extractPersona.addEventListener("click", async () => {
-  els.extractPersona.disabled = true;
-  els.personaHint.textContent = "读人格中…";
-  try {
-    const info = unwrap(await post("persona/extract", {})) || {};
-    if (info.appearance) $("character_appearance").value = info.appearance;
-    if (info.gender) $("character_gender").value = info.gender;
-    if (info.persona) $("character_persona").value = info.persona;
-    els.personaHint.textContent = info.source
-      ? "已从" + info.source + "提取，记得点保存"
-      : "已提取，记得点保存";
-  } catch (err) {
-    els.personaHint.textContent = "提取失败：" + String(err.message || err);
-  } finally {
-    els.extractPersona.disabled = false;
-  }
-});
+els.wRefresh.addEventListener("click", loadWardrobe);
 
 els.refresh.addEventListener("click", refresh);
 

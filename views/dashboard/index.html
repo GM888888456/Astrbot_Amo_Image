@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f4f4f6" />
   <title>我想和你度日常</title>
-  <link rel="stylesheet" href="./style.css?v=0.15.1" />
+  <link rel="stylesheet" href="./style.css?v=0.16.0" />
 </head>
 <body>
   <div class="wrap">
@@ -17,7 +17,7 @@
     <nav class="tabs">
       <button class="tab on" data-tab="status">概览</button>
       <button class="tab" data-tab="config">配置</button>
-      <button class="tab" data-tab="test">试画</button>
+      <button class="tab" data-tab="wardrobe">服装</button>
       <button class="tab" data-tab="history">记录</button>
     </nav>
 
@@ -138,18 +138,46 @@
       </div>
     </section>
 
-    <section class="pane" id="pane-test" hidden>
+    <section class="pane" id="pane-wardrobe" hidden>
       <div class="card">
-        <div class="card-title"><span>试画一张</span></div>
-        <textarea id="prompt" rows="2" placeholder="例如：下雨天的便利店门口，她撑着伞回头">窗边的猫，午后阳光</textarea>
+        <div class="card-title">
+          <span>她今天穿</span>
+          <span class="pill" id="wearNow">—</span>
+        </div>
+        <div class="meta" id="wardrobeMeta">读命中…</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span>添加衣服</span><span class="hint">日程会从这里挑</span></div>
+        <div class="field"><label>名称</label><input id="wName" placeholder="例如：米色针织开衫配浅蓝牛仔裤" /></div>
+        <div class="field">
+          <label>适合场景（可多选）</label>
+          <div class="chips" id="wScenes"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>性别</label>
+            <select id="wGender">
+              <option value="通用">通用</option>
+              <option value="女">女</option>
+              <option value="男">男</option>
+            </select>
+          </div>
+          <div class="field"><label>备注（可选）</label><input id="wNote" placeholder="他送的 / 生日礼物" /></div>
+        </div>
         <div class="row">
-          <button class="btn" id="draw">画</button>
-          <span class="hint" id="drawHint">面板调用不算聊天额度</span>
+          <button class="btn" id="wAdd">加入服装库</button>
+          <span class="hint" id="wHint">同名会合并</span>
         </div>
-        <div class="preview" id="preview" hidden>
-          <img id="previewImg" alt="预览" />
-          <div class="meta" id="previewMeta"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>服装库</span>
+          <button class="link" id="wRefresh">刷新</button>
         </div>
+        <ul class="list" id="wList">
+          <li class="empty">还没有衣服，先加一件</li>
+        </ul>
       </div>
     </section>
 
