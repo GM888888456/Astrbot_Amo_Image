@@ -824,3 +824,36 @@ def test_persona_extract_without_persona():
     assert data["gender"] == "女"
     assert data["appearance"] == ""
     assert data["source"] == "默认"
+
+
+PERSONA_SAMPLE = """一、 基础信息
+姓名：秦晓沫
+年龄：25岁
+身高体重：155cm / 50kg
+体型特征：典型的娇小小萝莉，轻盈软糯，抱起来软乎乎的。
+性格：被夸了会得意地翘尾巴。
+"""
+
+
+def test_persona_extract_skips_behavior_and_minor_words():
+    class FakeCompanion4:
+        persona_name = "秦晓沫"
+
+        def __init__(self):
+            self.llm = FakeLLM(PERSONA_SAMPLE)
+
+    p = make_plugin()
+    p._companion = lambda: FakeCompanion4()
+    data = collect(p.api_persona_extract())["data"]
+    assert data["gender"] == "女"
+    assert data["persona"] == "秦晓沫"
+    assert "翘尾巴" not in data["appearance"]
+    assert "萝莉" not in data["appearance"]
+    assert "155cm" not in data["appearance"]
+
+
+def test_config_api_returns_masked_key_only():
+    p = make_plugin(api_key="sk-1234567890abcdef")
+    data = collect(p.api_config())["data"]
+    assert data["api_key"] == ""
+    assert "…" in data["api_key_masked"]

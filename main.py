@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
     )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.13.0"
+PLUGIN_VERSION = "0.13.1"
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
@@ -1059,7 +1059,9 @@ class AmoImagePlugin(Star):
         data = {k: self._cfg(k, None) for k in keys}
         data["provider"] = str(self._cfg("provider", "openai") or "openai")
         data["character_gender"] = str(self._cfg("character_gender", "自动") or "自动")
-        data["api_key"] = self._mask_key()
+        # 面板只回掩码；真密钥不经过前端，避免误存/误传
+        data["api_key"] = ""
+        data["api_key_masked"] = self._mask_key()
         return self._json({"code": 0, "data": data})
 
     async def api_presets(self):
@@ -1072,26 +1074,65 @@ class AmoImagePlugin(Star):
         "眼睛", "眼眸", "瞳孔", "耳朵", "兽耳", "鳍耳", "尾巴",
         "皮肤", "身高", "体型", "脸型", "酒窝", "虎牙", "刘海",
     )
+    _LOOK_KEYS = (
+        "外貌", "长相", "样子", "发色", "发型", "瞳色", "眼睛",
+        "体型", "体型特征", "特征", "穿着", "服装", "皮肤",
+    )
+    # 这些词说明是行为/性格，不是长相
+    _BEHAVIOR_WORDS = (
+        "会", "喜欢", "被", "抱", "亲", "撒娇", "怼", "回", "说",
+        "觉得", "认为", "习惯", "总", "得意", "开心", "生气", "委屈",
+        "哭", "笑", "叫", "喊", "缠", "粘",
+    )
+    _MINOR_WORDS = ("萝莉", "loli", "幼女", "未成年", "正太")
 
     @classmethod
     def _look_clauses(cls, text):
-        """从人格文本里挑出描述长相的分句；挑不到就返回空。"""
+        """从人格文本里挑出描述长相的分句；挑不到就返回空。
+
+        人格常是「姓名：… / 体型特征：… / 爱好：…」这种条目，优先读长相相关的 key；
+        读不到再扫分句，但要把「被夸了会翘尾巴」这种行为描写排除掉。
+        """
         out = []
-        for line in str(text or "").replace("；", "。").split("。"):
-            for clause in line.split("，"):
-                value = clause.strip()
-                if not value or len(value) > 24:
-                    continue
-                if any(word in value for word in cls._LOOK_WORDS) and value not in out:
-                    out.append(value)
-                if len(out) >= 3:
-                    return out
+
+        def take(clause):
+            clause = clause.strip()
+            if not clause or len(clause) > 24:
+                return
+            if any(word in clause for word in cls._BEHAVIOR_WORDS):
+                return
+            if any(word in clause for word in cls._MINOR_WORDS):
+                return
+            if clause not in out:
+                out.append(clause)
+
+        for line in str(text or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            key, value = "", line
+            for sep in ("：", ":"):
+                if sep in line:
+                    key, value = [part.strip() for part in line.split(sep, 1)]
+                    break
+            clauses = [part.strip() for part in re.split(r"[，,。；;]", value) if part.strip()]
+            if key in cls._LOOK_KEYS:
+                for clause in clauses:
+                    take(clause)
+                    if len(out) >= 3:
+                        return out
+                continue
+            for clause in clauses:
+                if any(word in clause for word in cls._LOOK_WORDS):
+                    take(clause)
+                    if len(out) >= 3:
+                        return out
         return out
 
     @staticmethod
     def _guess_gender(text):
         raw = str(text or "")
-        female = sum(raw.count(word) for word in ("女孩", "女生", "少女", "女性", "姑娘"))
+        female = sum(raw.count(word) for word in ("女孩", "女生", "少女", "女性", "姑娘", "妻子", "老婆", "她"))
         male = sum(raw.count(word) for word in ("男孩", "男生", "少年", "男性"))
         return "男" if male > female else "女"
 

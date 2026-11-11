@@ -205,9 +205,10 @@ async function loadConfig() {
     if (data.character_gender) $("character_gender").value = data.character_gender;
     const outfits = data.character_outfits;
     $("character_outfits").value = Array.isArray(outfits) ? outfits.join("\n") : (outfits || "");
+    const masked = data.api_key_masked || (/…/.test(data.api_key || "") ? data.api_key : "");
     $("api_key").value = "";
-    $("api_key").placeholder = data.api_key_masked && data.api_key_masked !== "未配置"
-      ? "已配置 " + data.api_key_masked + "（留空不改）"
+    $("api_key").placeholder = masked && masked !== "未配置"
+      ? "已配置 " + masked + "（留空不改）"
       : "还没配置";
     syncCustomBlock();
   } catch (err) {
