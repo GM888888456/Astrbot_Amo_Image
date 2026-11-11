@@ -860,3 +860,26 @@ def test_config_api_returns_masked_key_only():
     data = collect(p.api_config())["data"]
     assert data["api_key"] == ""
     assert "…" in data["api_key_masked"]
+
+
+def test_camera_selfie_vs_third_person():
+    p = make_plugin()
+    assert p._camera("自拍一张") == main.SELFIE_CAMERA
+    assert p._camera("桌上的咖啡和一只猫") == main.OTHER_CAMERA
+    assert p._camera("她撑着伞回头") == main.OTHER_CAMERA
+
+
+def test_camera_mode_override():
+    p = make_plugin(camera_mode="自拍")
+    assert p._camera("桌上的咖啡") == main.SELFIE_CAMERA
+    q = make_plugin(camera_mode="他拍")
+    assert q._camera("自拍一张") == main.OTHER_CAMERA
+
+
+def test_final_prompt_carries_camera_angle():
+    p = make_plugin(character_outfits=["JK 制服"])
+    p._companion = lambda: FakeCompanion(place="家")
+    selfie = p._final_prompt("自拍")
+    assert "第一人称" in selfie and "第三人称" not in selfie
+    scene = p._final_prompt("窗边的猫")
+    assert "第三人称" in scene and "第一人称" not in scene

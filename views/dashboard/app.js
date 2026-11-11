@@ -203,6 +203,7 @@ async function loadConfig() {
     });
     if (data.provider) $("provider").value = data.provider;
     if (data.character_gender) $("character_gender").value = data.character_gender;
+    if (data.camera_mode) $("camera_mode").value = data.camera_mode;
     const outfits = data.character_outfits;
     $("character_outfits").value = Array.isArray(outfits) ? outfits.join("\n") : (outfits || "");
     const masked = data.api_key_masked || (/…/.test(data.api_key || "") ? data.api_key : "");
@@ -232,6 +233,7 @@ function collectConfig() {
   });
   payload.provider = $("provider").value;
   payload.character_gender = $("character_gender").value;
+  payload.camera_mode = $("camera_mode").value;
   payload.character_outfits = $("character_outfits").value
     .split("\n").map((line) => line.trim()).filter(Boolean);
   const key = $("api_key").value.trim();

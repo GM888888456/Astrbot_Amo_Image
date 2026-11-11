@@ -112,6 +112,17 @@
     ],
     "hint": "不写性别时模型容易画成男生；自动=看外观/角色描述，判断不出按女生。"
   },
+  "camera_mode": {
+    "type": "string",
+    "description": "拍摄角度",
+    "default": "自动",
+    "options": [
+      "自动",
+      "自拍",
+      "他拍"
+    ],
+    "hint": "自动=拍自己用前置自拍、拍别人/别的东西用第三人称他拍；也可以强制一种。"
+  },
   "character_persona": {
     "type": "string",
     "description": "角色名 / 一句话人设",

@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
     )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.13.2"
+PLUGIN_VERSION = "0.13.3"
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
@@ -83,6 +83,15 @@ DEFAULT_NEGATIVE_PROMPT = (
 
 # 「换一套衣服」这类手动换装：整句就是指令，不能当成生图提示词
 OUTFIT_COMMANDS = ("换一套衣服", "换套衣服", "换身衣服", "换衣服", "换一件衣服")
+
+# 拍摄角度：拍自己=自拍（前置、第一人称）；拍别人/别的东西=他拍（第三人称，别人拿手机）
+SELFIE_CAMERA = "手机前置摄像头，第一人称视角，靠近镜头"
+OTHER_CAMERA = "他拍，第三人称视角，对面的人拿手机拍，画面里不要出现拿手机的人"
+SELFIE_WORDS = ("自拍", "拍你", "拍我", "看看你", "你的照片", "自拍照", "前置",
+                "镜头对着自己", "来张自拍", "发张自拍")
+OTHER_WORDS = ("他", "她", "朋友", "猫", "狗", "宠物", "一起", "合影", "全身", "背影",
+               "桌上", "风景", "街", "店", "咖啡", "蛋糕", "花", "书", "电脑", "相机",
+               "天空", "海", "山", "路", "窗外", "雨", "食物", "菜", "画")
 
 # 没配外观时的保底描述：宁可普通，也不能每次换一张脸
 DEFAULT_APPEARANCE = "长发，五官清秀，自然妆容，日常穿搭"
@@ -142,7 +151,7 @@ WEB_EDITABLE = (
     "cooldown_seconds", "private_daily_limit", "group_daily_limit", "safe_mode",
     "blocked_reply", "reply_prefix", "error_reply",
     "character_appearance", "character_hairstyle", "character_outfits",
-    "character_gender", "character_persona",
+    "character_gender", "character_persona", "camera_mode",
     "outfit_change_keywords", "outfit_change_cooldown_minutes",
     "lock_scene_to_schedule", "keywords", "photo_keywords", "photo_default_prompt",
     "use_memory_context", "memory_context_limit",
@@ -214,7 +223,7 @@ def match_keyword(text: str, keywords) -> str:
 
 def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "",
                  place: str = "", activity: str = "", gender: str = "",
-                 persona: str = "") -> str:
+                 persona: str = "", camera: str = "") -> str:
     """拼最终提示词：性别 → 角色 → 外观 → 今日固定造型 → 地点/在干嘛 → 要求 → 上下文。
 
     性别和角色放在最前面，是因为模型默认会「猜」人物：不写性别就容易画出男的，
@@ -231,6 +240,8 @@ def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "
     # 陪伴那边的分享模板本身就带了 {place}，这里别再叠一遍「此刻在××」
     if str(look or "").strip() and str(look).strip() not in body:
         parts.append("今天的样子：" + str(look).strip())
+    if str(camera or "").strip():
+        parts.append(str(camera).strip())
     where = str(place or "").strip()
     doing = str(activity or "").strip()
     if where and where not in body:
@@ -896,6 +907,24 @@ class AmoImagePlugin(Star):
             name = str(conf.get("persona_name") or conf.get("bot_name") or "").strip()
         return name
 
+    def _camera(self, prompt):
+        """拍摄角度：拍自己=自拍，拍别人/别的东西=他拍。
+
+        这条不写，模型会把「桌上的一杯咖啡」也画成怼脸自拍，或者把「自拍」画成
+        别人站在对面拍——角度错了比衣服错了还明显。
+        """
+        mode = str(self._cfg("camera_mode", "自动") or "自动").strip()
+        if mode in ("自拍", "selfie"):
+            return SELFIE_CAMERA
+        if mode in ("他拍", "third", "第三人称"):
+            return OTHER_CAMERA
+        value = str(prompt or "")
+        if any(word in value for word in SELFIE_WORDS):
+            return SELFIE_CAMERA
+        if any(word in value for word in OTHER_WORDS):
+            return OTHER_CAMERA
+        return SELFIE_CAMERA  # 没线索时按自拍：她要给人看的通常是自己的照片
+
     def _appearance(self):
         """外观：没配就用保底描述，避免每次生成都换一张脸。"""
         value = str(self._cfg("character_appearance", "") or "").strip()
@@ -911,6 +940,7 @@ class AmoImagePlugin(Star):
             activity=self._scene_activity(),
             gender=self._gender(),
             persona=self._persona(),
+            camera=self._camera(prompt),
         )
 
     async def draw_for(self, umo: str, uid: str = "", prompt: str = "") -> bytes | None:
@@ -1053,7 +1083,7 @@ class AmoImagePlugin(Star):
             "private_daily_limit", "group_daily_limit",
             "safe_mode", "blocked_reply", "reply_prefix", "error_reply",
             "character_hairstyle", "character_outfits", "character_gender",
-            "character_persona", "outfit_change_keywords",
+            "character_persona", "camera_mode", "outfit_change_keywords",
             "outfit_change_cooldown_minutes", "lock_scene_to_schedule",
         ]
         data = {k: self._cfg(k, None) for k in keys}

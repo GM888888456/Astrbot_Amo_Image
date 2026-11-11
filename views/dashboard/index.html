@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f4f4f6" />
   <title>我想和你度日常</title>
-  <link rel="stylesheet" href="./style.css?v=0.13.2" />
+  <link rel="stylesheet" href="./style.css?v=0.13.3" />
 </head>
 <body>
   <div class="wrap">
@@ -91,6 +91,13 @@
             </select>
           </div>
           <div class="field"><label>角色名 / 一句话人设</label><input id="character_persona" placeholder="留空用陪伴的人格名" /></div>
+          <div class="field"><label>拍摄角度</label>
+            <select id="camera_mode">
+              <option value="自动">自动</option>
+              <option value="自拍">自拍</option>
+              <option value="他拍">他拍</option>
+            </select>
+          </div>
           <div class="field"><label>发型（固定）</label><input id="character_hairstyle" /></div>
           <div class="field"><label>换装冷却（分钟）</label><input id="outfit_change_cooldown_minutes" type="number" min="0" /></div>
         </div>
@@ -152,6 +159,6 @@
 
     <footer class="foot">Astrbot_Amo_Image · 反馈 QQ 群 1055679275</footer>
   </div>
-  <script type="module" src="./app.js?v=0.13.2"></script>
+  <script type="module" src="./app.js?v=0.13.3"></script>
 </body>
 </html>
