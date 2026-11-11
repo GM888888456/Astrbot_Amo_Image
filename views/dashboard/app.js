@@ -75,6 +75,7 @@ function renderStatus(data) {
     "冷却 " + (data.cooldown_seconds ?? 0) + "s",
     "日限 " + ((data.daily_limit ?? 0) || "不限"),
     "运行 " + Math.floor((data.uptime_seconds || 0) / 60) + " 分钟",
+    "今天穿 " + (data.look || "—"),
   ].join(" · ");
 }
 

@@ -169,7 +169,7 @@
     "type": "list",
     "description": "服装池（按天固定）",
     "default": [],
-    "hint": "每行一套。同一天固定穿其中一套；日程里出现「换衣服 / 洗澡」这类事件才会换下一套。留空则不锁服装。"
+    "hint": "每行一套。同一天固定穿其中一套；日程里出现「换衣服 / 洗澡」这类事件、且和上一次换装隔了冷却时间，才会换下一套。留空则用内置保底服装池，保证服装不随机。"
   },
   "outfit_change_keywords": {
     "type": "list",
@@ -183,10 +183,22 @@
     ],
     "hint": "日程活动里出现这些词，算一次换装，当天造型往后挪一套。"
   },
+  "outfit_change_cooldown_minutes": {
+    "type": "int",
+    "description": "换装冷却（分钟）",
+    "default": 60,
+    "hint": "日程里两条换装事件至少隔这么久才算两次；避免「换裙子」「换外套」连着跳好几套。"
+  },
   "lock_scene_to_schedule": {
     "type": "bool",
     "description": "场景锁定日程地点",
     "default": true,
     "hint": "打开后，画出来的场景就是她日程里此刻所在地点，不会上一秒景区下一秒别处；关掉则不限制。"
+  },
+  "negative_prompt": {
+    "type": "string",
+    "description": "负面提示词",
+    "default": "different face, different hairstyle, different clothes, different person, change location, other scenic spot, blurry, low quality, extra fingers",
+    "hint": "支持 negative_prompt 的后端（Kolors / SiliconFlow 等）会带上；不支持的会自动去掉重试，不会报错。留空则不传。"
   }
 }

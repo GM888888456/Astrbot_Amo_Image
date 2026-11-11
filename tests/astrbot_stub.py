@@ -67,6 +67,9 @@ class _Context:
         else:
             self.web_apis.append({"route": route, "methods": list(handler or []), "desc": desc})
 
+    def get_config(self):
+        return {"wake_prefix": []}
+
     def get_registered_star(self, name):
         return _Meta(self._stars[name]) if name in self._stars else None
 
@@ -131,7 +134,7 @@ class _Filter:
         return deco
 
     @staticmethod
-    def command(_name):
+    def command(_name, **kwargs):
         def deco(fn):
             return fn
 

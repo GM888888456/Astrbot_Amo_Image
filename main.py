@@ -52,7 +52,27 @@ class APIError(RuntimeError):
 
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.9.0"
+PLUGIN_VERSION = "0.10.0"
+
+# 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
+DEFAULT_OUTFITS = [
+    "米色针织开衫配浅蓝牛仔裤",
+    "白色棉质衬衫配深色半身裙",
+    "浅灰连帽卫衣配宽松长裤",
+    "碎花连衣裙外搭薄开衫",
+    "藏青色针织衫配卡其长裤",
+    "奶油色毛衣配直筒长裤",
+]
+
+# 负面提示词：支持 negative_prompt 的后端（Kolors / SiliconFlow 等）会用它，
+# 不支持的（OpenAI images）会自动去掉这个字段重试，不会因此报错。
+DEFAULT_NEGATIVE_PROMPT = (
+    "different face, different hairstyle, different clothes, different person, "
+    "change location, other scenic spot, blurry, low quality, extra fingers"
+)
+
+# 「换一套衣服」这类手动换装：整句就是指令，不能当成生图提示词
+OUTFIT_COMMANDS = ("换一套衣服", "换套衣服", "换身衣服", "换衣服", "换一件衣服")
 
 DATA_PLUGIN_NAMES = (
     "Astr_Amo_data",
@@ -200,12 +220,14 @@ def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "
     parts = []
     if str(appearance or "").strip():
         parts.append(str(appearance).strip())
-    if str(look or "").strip():
+    body = str(prompt or "")
+    # 陪伴那边的分享模板本身就带了 {place}，这里别再叠一遍「此刻在××」
+    if str(look or "").strip() and str(look).strip() not in body:
         parts.append("今天的样子：" + str(look).strip())
-    if str(place or "").strip():
+    if str(place or "").strip() and str(place).strip() not in body:
         parts.append("此刻在" + str(place).strip())
-    if str(prompt or "").strip():
-        parts.append(str(prompt).strip())
+    if body.strip():
+        parts.append(body.strip())
     if context_lines:
         tail = "；".join([str(x).strip() for x in context_lines if str(x).strip()][-6:])
         if tail:
@@ -225,6 +247,8 @@ class AmoImagePlugin(Star):
         self._daily = {}       # uid -> [日期字符串, 次数]
         self._history = deque(maxlen=40)   # 最近几次生图（面板用）
         self._style_cache = {}             # endpoint -> 试通过的参数风格
+        self._negative_ok = {}             # endpoint -> 后端认不认 negative_prompt
+        self._look_state = None            # 手动换装记录（按天，落盘）
         self._calls_total = 0
         self._started_at = time.time()
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -448,13 +472,22 @@ class AmoImagePlugin(Star):
             headers["Authorization"] = "Bearer " + key
         return headers
 
-    def _body(self, prompt: str, style: str = "openai") -> dict:
+    def _negative(self) -> str:
+        value = self._cfg("negative_prompt", DEFAULT_NEGATIVE_PROMPT)
+        if value is None:
+            value = DEFAULT_NEGATIVE_PROMPT
+        return str(value).strip()
+
+    def _body(self, prompt: str, style: str = "openai", negative: str = "") -> dict:
         """请求体。不认厂商，只按「参数名风格」组装。
 
         openai：size / n（+ quality / style）
         aliases：image_size / batch_size —— 有些兼容层只认这两个名字
+        negative：negative_prompt，后端认识就传，不认识由 `_generate` 去掉重试
         """
         body = {"prompt": prompt}
+        if negative:
+            body["negative_prompt"] = negative
         model = str(self._cfg("model", "") or "").strip()
         if model:
             body["model"] = model
@@ -538,19 +571,31 @@ class AmoImagePlugin(Star):
     async def _generate(self, prompt: str) -> bytes:
         endpoint = self._endpoint()
         errors = []
+        # 只有上次被后端明确拒过，才不再带 negative_prompt，省一次 400
+        negative = self._negative() if self._negative_ok.get(endpoint, True) else ""
         for style in self._style_order():
-            try:
-                payload = await self._post_json(endpoint, self._body(prompt, style))
-            except APIError as exc:
-                errors.append(str(exc))
-                # 只有「参数不认识 / 路径不对」才值得换一套参数重试；
-                # 401、429、5xx 换参数也没用，直接抛给上层。
-                if exc.status in self.RETRY_STATUS:
-                    continue
-                raise
-            self._style_cache[endpoint] = style
-            kind, value = parse_image_response(payload)
-            return await self._download(value) if kind == "url" else value
+            variants = [self._body(prompt, style, negative)]
+            if negative:
+                variants.append(self._body(prompt, style, ""))
+            for index, body in enumerate(variants):
+                try:
+                    payload = await self._post_json(endpoint, body)
+                except APIError as exc:
+                    errors.append(str(exc))
+                    if index == 0 and negative:
+                        # 这个后端不认 negative_prompt：记住，并去掉它再试
+                        self._negative_ok[endpoint] = False
+                    # 只有「参数不认识 / 路径不对」才值得换一套参数重试；
+                    # 401、429、5xx 换参数也没用，直接抛给上层。
+                    if exc.status in self.RETRY_STATUS:
+                        continue
+                    raise
+                self._style_cache[endpoint] = style
+                if negative:
+                    # 带 negative 的那一版成功才算认；去掉之后才成功说明不认
+                    self._negative_ok[endpoint] = index == 0
+                kind, value = parse_image_response(payload)
+                return await self._download(value) if kind == "url" else value
         raise RuntimeError("；".join(errors[-2:]) or "生图接口没有可用的参数风格")
 
     # ---------- 一致性：同一个人、同一天同一套造型、同一个地点 ----------
@@ -589,11 +634,97 @@ class AmoImagePlugin(Star):
             value = [line.strip() for line in value.split("\n")]
         return [str(item).strip() for item in (value or []) if str(item).strip()]
 
+    def _outfit_pool(self):
+        """服装候选：没配就用内置保底，绝不让提示词里缺服装。"""
+        return self._outfits() or list(DEFAULT_OUTFITS)
+
+    def _outfit_cooldown(self):
+        return max(0, self._int("outfit_change_cooldown_minutes", 60))
+
     def _outfit_change_words(self):
         value = self._cfg("outfit_change_keywords", ["换衣服", "换装", "洗澡", "换上", "换一身"])
         if isinstance(value, str):
             value = [item.strip() for item in value.split(",")]
         return [str(item).strip() for item in (value or []) if str(item).strip()]
+
+    # ---------- 手动换装（/换一套衣服）----------
+
+    def _look_state_path(self):
+        return os.path.join(self.plugin_dir, "look_state.json")
+
+    def _load_look_state(self):
+        if isinstance(self._look_state, dict):
+            return self._look_state
+        state = {}
+        try:
+            with open(self._look_state_path(), "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                state = data
+        except Exception:
+            state = {}
+        self._look_state = state
+        return state
+
+    def _look_bonus(self, day):
+        """手动换装累计次数：只对当天有效，换了天自动归零。"""
+        state = self._load_look_state()
+        if str(state.get("date") or "") != str(day or ""):
+            return 0
+        try:
+            return max(0, int(state.get("bonus") or 0))
+        except Exception:
+            return 0
+
+    def _bump_look(self, day):
+        """手动换下一套，返回新的累计次数；落盘失败也只影响重启后丢失。"""
+        state = self._load_look_state()
+        bonus = self._look_bonus(day) + 1
+        self._look_state = {"date": str(day or ""), "bonus": bonus}
+        try:
+            path = self._look_state_path()
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(self._look_state, handle, ensure_ascii=False)
+            os.replace(tmp, path)
+        except Exception as exc:
+            logger.debug("[amo_image] 换装记录落盘失败: %s" % exc)
+        return bonus
+
+    def _today(self):
+        day = str((self._companion_state().get("snapshot") or {}).get("date") or "").strip()
+        return day or time.strftime("%Y-%m-%d")
+
+    def _wake_prefixes(self):
+        """AstrBot 的唤醒词；消息里带着它就剥掉，再判断是不是换装指令。"""
+        try:
+            config = self.context.get_config()
+            prefixes = config.get("wake_prefix") or []
+        except Exception:
+            return []
+        if isinstance(prefixes, str):
+            prefixes = [prefixes]
+        return [str(item) for item in prefixes if str(item)]
+
+    def _outfit_request(self, text):
+        """整句就是「换一套衣服」才算，别把聊天里提到换衣服当成指令。"""
+        body = str(text or "").strip().strip(_TRIM_CHARS)
+        if not body:
+            return ""
+        for prefix in self._wake_prefixes():
+            if body.startswith(prefix):
+                body = body[len(prefix):].strip().strip(_TRIM_CHARS)
+                break
+        for word in OUTFIT_COMMANDS:
+            if body == word:
+                return word
+        return ""
+
+    def _change_outfit(self):
+        """手动换下一套，返回新的造型描述。"""
+        day = self._today()
+        self._bump_look(day)
+        return self._daily_look()
 
     @staticmethod
     def _minutes_of(text):
@@ -603,18 +734,45 @@ class AmoImagePlugin(Star):
         except Exception:
             return -1
 
+    def _outfit_changes(self, day, now_minutes):
+        """今天已经生效的换装次数。
+
+        - 同一段日程只算一次：两次换装至少隔 `outfit_change_cooldown_minutes`，
+          避免「换裙子」「换外套」连着两条把造型连跳好几套；
+        - 只算已经开始的事件，没到点的不算。
+        """
+        words = self._outfit_change_words()
+        gap = self._outfit_cooldown()          # 分钟
+        schedule = (self._companion_state().get("schedule") or {}).get(day) or []
+        starts = []
+        for item in schedule:
+            activity = str(item.get("activity") or "")
+            if not any(word in activity for word in words):
+                continue
+            start = self._minutes_of(item.get("start"))
+            if start < 0:
+                start = 0          # 没写时间的换装：当天一早就算发生
+            if start > now_minutes:
+                continue
+            starts.append(start)
+        starts.sort()
+        accepted = []
+        for start in starts:
+            if accepted and start - accepted[-1] < gap:
+                continue
+            accepted.append(start)
+        return len(accepted)
+
     def _daily_look(self):
         """今天穿什么、头发什么样。
 
-        - 有 `character_outfits` 时，按「日期 + 今天已发生的换装事件数」取一套，
+        - 服装池按「日期 + 今天已生效的换装次数 + 手动换装次数」取一套，
           同一天结果稳定，重启也不变；
-        - 日程里出现「换衣服/洗澡」这类词，才会换下一套；
-        - 没配 outfits 就只用 `character_hairstyle`，不再随机。
+        - 日程里出现「换衣服/洗澡」这类词，且间隔够久，才会换下一套；
+        - 服装池留空时用内置保底池，保证提示词里永远有服装描述。
         """
         hairstyle = str(self._cfg("character_hairstyle", "") or "").strip()
-        outfits = self._outfits()
-        if not outfits:
-            return hairstyle
+        outfits = self._outfit_pool()
         state = self._companion_state()
         snapshot = state.get("snapshot") or {}
         day = str(snapshot.get("date") or "").strip()
@@ -624,15 +782,7 @@ class AmoImagePlugin(Star):
         if now_minutes < 0:
             now = time.localtime()
             now_minutes = now.tm_hour * 60 + now.tm_min
-        changes = 0
-        words = self._outfit_change_words()
-        for item in (state.get("schedule") or {}).get(day, []) or []:
-            activity = str(item.get("activity") or "")
-            if not any(word in activity for word in words):
-                continue
-            start = self._minutes_of(item.get("start"))
-            if start < 0 or start <= now_minutes:
-                changes += 1
+        changes = self._outfit_changes(day, now_minutes) + self._look_bonus(day)
         index = (zlib.crc32(day.encode("utf-8")) + changes) % len(outfits)
         outfit = outfits[index]
         if hairstyle:
@@ -750,6 +900,7 @@ class AmoImagePlugin(Star):
                 "users_today": self._today_used(),
                 "calls_total": self._calls_total,
                 "history_size": len(self._history),
+                "look": self._daily_look(),
                 "uptime_seconds": int(time.time() - self._started_at),
             },
         })
@@ -763,6 +914,8 @@ class AmoImagePlugin(Star):
             "character_appearance", "use_memory_context", "memory_context_limit",
             "allow_private", "allow_group", "require_at_in_group", "quote_in_group",
             "keywords", "cooldown_seconds", "daily_limit", "reply_prefix", "error_reply",
+            "character_hairstyle", "character_outfits", "outfit_change_keywords",
+            "outfit_change_cooldown_minutes", "lock_scene_to_schedule", "negative_prompt",
         ]
         data = {k: self._cfg(k, None) for k in keys}
         data["api_key"] = self._mask_key()
@@ -854,6 +1007,14 @@ class AmoImagePlugin(Star):
                 return
             if group and self._bool("require_at_in_group", False) and not self._is_at_me(event):
                 return
+            if self._outfit_request(text):
+                try:
+                    look = self._change_outfit()
+                    yield event.plain_result("换好了：%s" % look)
+                except Exception as exc:
+                    logger.debug("[amo_image] 手动换装失败: %s" % exc)
+                event.stop_event()
+                return
             photo_words = self._photo_keywords()
             keyword = match_keyword(text, self._keywords() + photo_words)
             if not keyword:
@@ -904,7 +1065,7 @@ class AmoImagePlugin(Star):
 
     @filter.command("amoimage")
     async def amoimage(self, event: AstrMessageEvent, *args):
-        """生图插件的状态与手动出图：/amoimage status | /amoimage draw <提示词>"""
+        """生图插件的状态与手动操作：/amoimage status | draw <提示词> | outfit"""
         args = [str(x) for x in (args or []) if str(x).strip()]
         action = args[0].lower() if args else "status"
         if action in ("status", "状态"):
@@ -914,14 +1075,19 @@ class AmoImagePlugin(Star):
             used = record[1] if record[0] == today else 0
             limit = self._int("daily_limit", 20)
             yield event.plain_result(
-                "生图：%s\n后端：%s\n模型：%s\n今日：%s/%s" % (
+                "生图：%s\n后端：%s\n模型：%s\n今日：%s/%s\n今天穿：%s" % (
                     "开" if self._bool("enable", True) else "关",
                     str(self._cfg("api_base", "") or "未配置"),
                     str(self._cfg("model", "") or "-"),
                     used,
                     limit if limit else "不限",
+                    self._daily_look(),
                 )
             )
+            return
+        if action in ("outfit", "换衣服", "换装"):
+            # 手动换下一套，不受日程和冷却限制
+            yield event.plain_result("换好了：%s" % self._change_outfit())
             return
         if action in ("draw", "画"):
             prompt = " ".join(args[1:]).strip()
@@ -931,4 +1097,4 @@ class AmoImagePlugin(Star):
             async for result in self._draw(event, prompt):
                 yield result
             return
-        yield event.plain_result("用法：/amoimage status 或 /amoimage draw <提示词>")
+        yield event.plain_result("用法：/amoimage status ｜ draw <提示词> ｜ outfit")

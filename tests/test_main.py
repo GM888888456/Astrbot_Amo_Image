@@ -403,3 +403,129 @@ async def _async(value):
 
 async def _async_raise(exc):
     raise exc
+
+
+def test_outfit_pool_falls_back_when_empty():
+    """服装池清空也要有保底，不能出现没写服装的提示词。"""
+    p = make_plugin(character_outfits=[])
+    look = p._daily_look()
+    assert any(outfit in look for outfit in main.DEFAULT_OUTFITS)
+
+
+def test_outfit_change_needs_cooldown():
+    """连着两条换装日程，间隔不够只算一次，避免造型连跳。"""
+    day = "2026-11-11"
+    schedule = {day: [
+        {"start": "07:00", "end": "07:10", "activity": "起床换衣服"},
+        {"start": "07:20", "end": "07:30", "activity": "出门前换装"},
+    ]}
+
+    p = make_plugin(character_outfits=["JK 制服", "汉服", "运动服"], outfit_change_cooldown_minutes=60)
+    p._companion = lambda: FakeCompanion(day=day, clock="09:00", schedule=schedule)
+    assert p._outfit_changes(day, 9 * 60) == 1
+
+    # 关掉冷却就是两次
+    p0 = make_plugin(character_outfits=["JK 制服", "汉服", "运动服"], outfit_change_cooldown_minutes=0)
+    p0._companion = lambda: FakeCompanion(day=day, clock="09:00", schedule=schedule)
+    assert p0._outfit_changes(day, 9 * 60) == 2
+
+
+def test_outfit_change_ignores_future_and_duplicate():
+    day = "2026-11-11"
+    schedule = {day: [
+        {"start": "07:00", "activity": "回家换衣服"},
+        {"start": "07:00", "activity": "换衣服"},
+        {"start": "20:00", "activity": "洗澡换衣服"},
+    ]}
+    p = make_plugin(character_outfits=["A", "B", "C"])
+    p._companion = lambda: FakeCompanion(day=day, clock="09:00", schedule=schedule)
+    assert p._outfit_changes(day, 9 * 60) == 1
+
+
+def test_manual_outfit_change_moves_to_next_look(tmp_path):
+    p = make_plugin(character_outfits=["A 套", "B 套", "C 套"])
+    p.plugin_dir = str(tmp_path)
+    p._companion = lambda: FakeCompanion(day="2026-11-11", clock="12:00")
+    before = p._daily_look()
+    after = p._change_outfit()
+    assert after != before
+    # 重启后仍然记得今天手动换过
+    again = make_plugin(character_outfits=["A 套", "B 套", "C 套"])
+    again.plugin_dir = str(tmp_path)
+    again._companion = lambda: FakeCompanion(day="2026-11-11", clock="12:00")
+    assert again._daily_look() == after
+
+
+def test_outfit_command_text_triggers_change(tmp_path):
+    p = make_plugin(character_outfits=["A 套", "B 套"])
+    p.plugin_dir = str(tmp_path)
+    p._companion = lambda: FakeCompanion(day="2026-11-11", clock="12:00")
+    ev = _Event("换一套衣服", private=True)
+    out = collect(p.on_message(ev))
+    assert out and out[0].kind == "plain" and "换好了" in out[0].payload
+    assert ev.stopped is True
+
+    # 聊天里提到换衣服不算指令，也别当生图触发词
+    ev2 = _Event("我想换一套衣服再出门", private=True)
+    assert collect(p.on_message(ev2)) == []
+    assert ev2.stopped is False
+
+
+def test_outfit_command_with_wake_prefix(tmp_path):
+    p = make_plugin(character_outfits=["A 套", "B 套"])
+    p.plugin_dir = str(tmp_path)
+    p.context.get_config = lambda: {"wake_prefix": ["晓沫"]}
+    p._companion = lambda: FakeCompanion(day="2026-11-11", clock="12:00")
+    assert p._outfit_request("晓沫换一套衣服") == "换一套衣服"
+
+
+def test_draw_paths_share_the_same_look():
+    """自动分发（draw_for）和「画一张」命令必须是同一套造型、同一个地点。"""
+    p = make_plugin(character_outfits=["JK 制服"], character_hairstyle="双马尾",
+                    lock_scene_to_schedule=True)
+    p._companion = lambda: FakeCompanion(place="城郊的湖边")
+    seen = []
+
+    async def fake_generate(prompt):
+        seen.append(prompt)
+        return b"PNG"
+
+    p._generate = fake_generate
+    collect(p.draw_for("umo", "u1", "自拍"))
+    collect(p._draw(_Event("画一张猫"), "猫"))
+    assert len(seen) == 2
+    assert "JK 制服" in seen[0] and "JK 制服" in seen[1]
+    assert "此刻在城郊的湖边" in seen[0] and "此刻在城郊的湖边" in seen[1]
+
+
+def test_negative_prompt_sent_and_dropped_on_400():
+    p = make_plugin(negative_prompt="different face")
+    assert p._body("猫", "openai", "different face")["negative_prompt"] == "different face"
+
+    calls = []
+
+    async def fake_post(url, body):
+        calls.append(dict(body))
+        if "negative_prompt" in body:
+            raise main.APIError(400, "unknown field negative_prompt")
+        return {"data": [{"url": "https://img.test/a.png"}]}
+
+    async def fake_download(url):
+        return b"PNG"
+
+    p._post_json = fake_post
+    p._download = fake_download
+    assert collect(p._generate("猫")) == b"PNG"
+    assert calls[0].get("negative_prompt") == "different face"
+    assert "negative_prompt" not in calls[1]
+    # 记住这个后端不认，下次不再浪费一次 400
+    assert p._negative_ok[p._endpoint()] is False
+    collect(p._generate("猫"))
+    assert "negative_prompt" not in calls[2]
+
+
+def test_place_not_duplicated_when_prompt_already_has_it():
+    p = make_plugin(character_outfits=["JK 制服"])
+    p._companion = lambda: FakeCompanion(place="家")
+    text = p._final_prompt("自拍，在家看书，自然光")
+    assert text.count("家") == 1
