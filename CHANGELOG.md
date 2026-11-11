@@ -1,7 +1,5 @@
 # Changelog
 
-
-
 ## 1.6.1（持久化路径合规）
 
 - 按 AstrBot 上架审核意见：手动换装记录 `look_state.json` 原先写在插件安装目录

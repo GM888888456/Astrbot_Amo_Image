@@ -9,6 +9,11 @@
 给 Amo 做生图联动的第三个插件：聊天里说一句「画一张……」，她按人设把画面画出来。
 它只负责画图，不参与聊天判定、不改 AstrBot 核心链路。
 
+## 1.6.1 持久化路径合规
+
+- 手动换装记录 `look_state.json` 从插件安装目录改到 `data/plugin_data/<插件名>/`（上架审核要求）；
+- 新增 `_plugin_data_dir()`：优先用上下文给的插件数据目录，拿不到再拼 `plugin_dir/../plugin_data/<插件名>`。
+
 ## 1.6.0 面板服装库
 
 - 发型固定（`character_hairstyle`）；服装按天固定（`character_outfits`，日程里换衣服才换套）；
