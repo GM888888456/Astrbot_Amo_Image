@@ -21,6 +21,7 @@ import os
 import re
 import tempfile
 import time
+import zlib
 from collections import deque
 
 from astrbot.api import logger
@@ -51,7 +52,7 @@ class APIError(RuntimeError):
 
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.8.0"
+PLUGIN_VERSION = "0.9.0"
 
 DATA_PLUGIN_NAMES = (
     "Astr_Amo_data",
@@ -189,17 +190,28 @@ def parse_image_response(payload) -> tuple:
     raise ValueError("响应里找不到图片（data / images / artifacts 均无 url 或 base64）")
 
 
-def build_prompt(appearance: str, prompt: str, context_lines=None) -> str:
-    """拼最终提示词：外观 → 用户要求 → 剧情上下文。"""
+def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "",
+                 place: str = "") -> str:
+    """拼最终提示词：外观 → 今日固定造型 → 此刻地点 → 用户要求 → 剧情上下文。
+
+    look / place 是为了「同一个人、同一天不换衣服、不瞬移」：造型按天固定，
+    地点来自日程里此刻那一格，不是随机换。
+    """
     parts = []
     if str(appearance or "").strip():
         parts.append(str(appearance).strip())
+    if str(look or "").strip():
+        parts.append("今天的样子：" + str(look).strip())
+    if str(place or "").strip():
+        parts.append("此刻在" + str(place).strip())
     if str(prompt or "").strip():
         parts.append(str(prompt).strip())
     if context_lines:
         tail = "；".join([str(x).strip() for x in context_lines if str(x).strip()][-6:])
         if tail:
             parts.append("画面要接得上这段对话：%s" % tail)
+    if str(appearance or "").strip() or str(look or "").strip():
+        parts.append("同一个人，脸、发型、服装保持一致，不要换成别的装扮")
     return "，".join(parts)
 
 
@@ -541,6 +553,109 @@ class AmoImagePlugin(Star):
             return await self._download(value) if kind == "url" else value
         raise RuntimeError("；".join(errors[-2:]) or "生图接口没有可用的参数风格")
 
+    # ---------- 一致性：同一个人、同一天同一套造型、同一个地点 ----------
+
+    def _companion_state(self):
+        """从陪伴读她的运行状态（此刻在干嘛、今天的日程）；读不到就返回空。"""
+        companion = self._companion()
+        if companion is None:
+            return {}
+        try:
+            state = getattr(companion, "state", None)
+            if state is None:
+                return {}
+            snapshot = {}
+            try:
+                snapshot = state.snapshot() or {}
+            except Exception:
+                snapshot = {}
+            activity = {}
+            try:
+                activity = state.current_activity() or {}
+            except Exception:
+                activity = {}
+            schedule = {}
+            try:
+                schedule = getattr(state, "schedule", {}) or {}
+            except Exception:
+                schedule = {}
+            return {"snapshot": snapshot, "activity": activity, "schedule": schedule}
+        except Exception:
+            return {}
+
+    def _outfits(self):
+        value = self._cfg("character_outfits", [])
+        if isinstance(value, str):
+            value = [line.strip() for line in value.split("\n")]
+        return [str(item).strip() for item in (value or []) if str(item).strip()]
+
+    def _outfit_change_words(self):
+        value = self._cfg("outfit_change_keywords", ["换衣服", "换装", "洗澡", "换上", "换一身"])
+        if isinstance(value, str):
+            value = [item.strip() for item in value.split(",")]
+        return [str(item).strip() for item in (value or []) if str(item).strip()]
+
+    @staticmethod
+    def _minutes_of(text):
+        try:
+            hour, minute = str(text or "").split(":")[:2]
+            return int(hour) * 60 + int(minute)
+        except Exception:
+            return -1
+
+    def _daily_look(self):
+        """今天穿什么、头发什么样。
+
+        - 有 `character_outfits` 时，按「日期 + 今天已发生的换装事件数」取一套，
+          同一天结果稳定，重启也不变；
+        - 日程里出现「换衣服/洗澡」这类词，才会换下一套；
+        - 没配 outfits 就只用 `character_hairstyle`，不再随机。
+        """
+        hairstyle = str(self._cfg("character_hairstyle", "") or "").strip()
+        outfits = self._outfits()
+        if not outfits:
+            return hairstyle
+        state = self._companion_state()
+        snapshot = state.get("snapshot") or {}
+        day = str(snapshot.get("date") or "").strip()
+        if not day:
+            day = time.strftime("%Y-%m-%d")
+        now_minutes = self._minutes_of(snapshot.get("time") or "")
+        if now_minutes < 0:
+            now = time.localtime()
+            now_minutes = now.tm_hour * 60 + now.tm_min
+        changes = 0
+        words = self._outfit_change_words()
+        for item in (state.get("schedule") or {}).get(day, []) or []:
+            activity = str(item.get("activity") or "")
+            if not any(word in activity for word in words):
+                continue
+            start = self._minutes_of(item.get("start"))
+            if start < 0 or start <= now_minutes:
+                changes += 1
+        index = (zlib.crc32(day.encode("utf-8")) + changes) % len(outfits)
+        outfit = outfits[index]
+        if hairstyle:
+            return "穿%s，%s" % (outfit, hairstyle)
+        return "穿%s" % outfit
+
+    def _scene_place(self):
+        """此刻她在哪。锁定日程时，就在日程那一格的地点，不随机换场景。"""
+        if not self._bool("lock_scene_to_schedule", True):
+            return ""
+        state = self._companion_state()
+        activity = state.get("activity") or {}
+        return str(activity.get("place") or "").strip()
+
+    def _final_prompt(self, prompt, context_lines=None):
+        return build_prompt(
+            self._cfg("character_appearance", ""),
+            prompt,
+            context_lines,
+            look=self._daily_look(),
+            place=self._scene_place(),
+        )
+
     async def draw_for(self, umo: str, uid: str = "", prompt: str = "") -> bytes | None:
         """给别的插件（陪伴）用的公开出图接口：不接事件，直接返回图片字节。
 
@@ -553,7 +668,7 @@ class AmoImagePlugin(Star):
             return None
         try:
             context_lines = await self._context_lines(str(umo or ""), str(uid or ""))
-            final_prompt = build_prompt(self._cfg("character_appearance", ""), prompt, context_lines)
+            final_prompt = self._final_prompt(prompt, context_lines)
             data = await self._generate(final_prompt)
         except Exception as exc:
             logger.warning("[amo_image] draw_for 失败: %s" % exc)
@@ -662,7 +777,7 @@ class AmoImagePlugin(Star):
             except Exception:
                 payload = {}
         prompt = str((payload or {}).get("prompt") or "").strip() or "窗边的猫，午后阳光"
-        final_prompt = build_prompt(self._cfg("character_appearance", ""), prompt, [])
+        final_prompt = self._final_prompt(prompt, [])
         started = time.time()
         try:
             data = await self._generate(final_prompt)
@@ -767,7 +882,7 @@ class AmoImagePlugin(Star):
             return
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         ctx = await self._context_lines(umo, uid)
-        final_prompt = build_prompt(self._cfg("character_appearance", ""), prompt, ctx)
+        final_prompt = self._final_prompt(prompt, ctx)
         self._mark_call(uid)
         started = time.time()
         try:

@@ -248,6 +248,68 @@ def test_short_prompt_asks_for_detail():
     assert out and out[0].kind == "plain" and "想画什么" in out[0].payload
 
 
+class FakeCompanionState:
+    def __init__(self, day="2026-11-11", clock="14:00", place="家", schedule=None):
+        self.day = day
+        self.clock = clock
+        self.place = place
+        self.schedule = schedule or {}
+
+    def snapshot(self):
+        return {"date": self.day, "time": self.clock}
+
+    def current_activity(self):
+        return {"activity": "在家看书", "place": self.place}
+
+
+class FakeCompanion:
+    def __init__(self, **kwargs):
+        self.state = FakeCompanionState(**kwargs)
+
+
+def test_daily_look_is_stable_within_a_day():
+    p = make_plugin(character_outfits=["JK 制服", "汉服"], character_hairstyle="黑色长直发")
+    p._companion = lambda: FakeCompanion()
+    first = p._daily_look()
+    second = p._daily_look()
+    assert first == second
+    assert "黑色长直发" in first
+
+
+def test_daily_look_changes_after_outfit_event():
+    day = "2026-11-11"
+    base = make_plugin(character_outfits=["JK 制服", "汉服"])
+    base._companion = lambda: FakeCompanion(day=day, clock="09:00")
+    before = base._daily_look()
+
+    changed = make_plugin(character_outfits=["JK 制服", "汉服"])
+    changed._companion = lambda: FakeCompanion(
+        day=day, clock="14:00",
+        schedule={day: [{"start": "13:00", "end": "13:30", "activity": "回家换衣服"}]},
+    )
+    after = changed._daily_look()
+    assert before != after
+
+
+def test_scene_place_follows_schedule():
+    p = make_plugin()
+    p._companion = lambda: FakeCompanion(place="城郊的湖边")
+    assert p._scene_place() == "城郊的湖边"
+    off = make_plugin(lock_scene_to_schedule=False)
+    off._companion = lambda: FakeCompanion(place="城郊的湖边")
+    assert off._scene_place() == ""
+
+
+def test_final_prompt_carries_consistency():
+    p = make_plugin(character_appearance="银灰长发", character_outfits=["JK 制服"], character_hairstyle="双马尾")
+    p._companion = lambda: FakeCompanion(place="家")
+    text = p._final_prompt("在窗边看书")
+    assert "银灰长发" in text
+    assert "JK 制服" in text and "双马尾" in text
+    assert "此刻在家" in text
+    assert "保持一致" in text
+
+
 def test_draw_for_returns_bytes():
     p = make_plugin()
     p._generate = lambda prompt: _async(b"PNG")

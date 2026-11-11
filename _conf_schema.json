@@ -158,5 +158,35 @@
     "description": "拍照默认提示词",
     "default": "自拍，日常光线，自然表情，看向镜头",
     "hint": "「给我拍张照」这种没内容的请求，用它来生成。"
+  },
+  "character_hairstyle": {
+    "type": "string",
+    "description": "发型（固定）",
+    "default": "",
+    "hint": "每天都一样的发型，例如「黑色长直发，齐刘海」。不填就只靠 character_appearance。"
+  },
+  "character_outfits": {
+    "type": "list",
+    "description": "服装池（按天固定）",
+    "default": [],
+    "hint": "每行一套。同一天固定穿其中一套；日程里出现「换衣服 / 洗澡」这类事件才会换下一套。留空则不锁服装。"
+  },
+  "outfit_change_keywords": {
+    "type": "list",
+    "description": "换装触发词",
+    "default": [
+      "换衣服",
+      "换装",
+      "洗澡",
+      "换上",
+      "换一身"
+    ],
+    "hint": "日程活动里出现这些词，算一次换装，当天造型往后挪一套。"
+  },
+  "lock_scene_to_schedule": {
+    "type": "bool",
+    "description": "场景锁定日程地点",
+    "default": true,
+    "hint": "打开后，画出来的场景就是她日程里此刻所在地点，不会上一秒景区下一秒别处；关掉则不限制。"
   }
 }
