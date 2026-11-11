@@ -767,3 +767,11 @@ def test_save_config_api_updates_and_persists():
     assert cfg["character_outfits"] == ["A 套", "B 套"]
     assert cfg["api_key"] == "sk-real-key"      # 掩码不覆盖真密钥
     assert cfg.saved == 1
+
+
+def test_empty_appearance_falls_back_to_default():
+    p = make_plugin(character_outfits=["JK 制服"])
+    p._companion = lambda: FakeCompanion(place="家")
+    text = p._final_prompt("自拍")
+    assert main.DEFAULT_APPEARANCE in text
+    assert text.startswith("女生")

@@ -84,6 +84,9 @@ DEFAULT_NEGATIVE_PROMPT = (
 # 「换一套衣服」这类手动换装：整句就是指令，不能当成生图提示词
 OUTFIT_COMMANDS = ("换一套衣服", "换套衣服", "换身衣服", "换衣服", "换一件衣服")
 
+# 没配外观时的保底描述：宁可普通，也不能每次换一张脸
+DEFAULT_APPEARANCE = "长发，五官清秀，自然妆容，日常穿搭"
+
 # 内容边界：私聊只拦露骨裸体 / 性器官 / 性行为 / 未成年相关；
 # 群聊额外拦「只穿内衣 / 比基尼 / 情趣内衣」这类。这是一层关键词防线，
 # 挡不住谐音、外语、拆字和极端变体，别当唯一保险。
@@ -876,10 +879,7 @@ class AmoImagePlugin(Star):
             return "女生"
         if raw in ("男", "男生", "male", "m", "M"):
             return "男生"
-        text = " ".join([
-            str(self._cfg("character_appearance", "") or ""),
-            str(self._cfg("character_persona", "") or ""),
-        ])
+        text = " ".join([self._appearance(), str(self._cfg("character_persona", "") or "")])
         if any(word in text for word in ("男生", "男孩", "少年", "男性")):
             return "男生"
         return "女生"
@@ -896,9 +896,14 @@ class AmoImagePlugin(Star):
             name = str(conf.get("persona_name") or conf.get("bot_name") or "").strip()
         return name
 
+    def _appearance(self):
+        """外观：没配就用保底描述，避免每次生成都换一张脸。"""
+        value = str(self._cfg("character_appearance", "") or "").strip()
+        return value or DEFAULT_APPEARANCE
+
     def _final_prompt(self, prompt, context_lines=None):
         return build_prompt(
-            self._cfg("character_appearance", ""),
+            self._appearance(),
             prompt,
             context_lines,
             look=self._daily_look(),
