@@ -20,8 +20,8 @@
   "model": {
     "type": "string",
     "description": "生图模型",
-    "default": "gpt-image-1",
-    "hint": "后端支持的模型名，例如 gpt-image-1 / dall-e-3 / flux-schnell / sd-turbo。"
+    "default": "",
+    "hint": "填后端自己的模型名（各家不同，例如 gpt-image-1 / Kwai-Kolors/Kolors / black-forest-labs/FLUX.1-schnell）。留空则不发送 model 字段，交给后端默认。"
   },
   "size": {
     "type": "string",
@@ -131,5 +131,32 @@
     "description": "失败话术",
     "default": "画不出来，等会儿再试试",
     "hint": "后端报错、超时、返回空时回这一句，不抛异常。"
+  },
+  "request_style": {
+    "type": "string",
+    "description": "请求参数风格",
+    "default": "auto",
+    "hint": "auto=先用 OpenAI 的 size/n，400 时自动换 image_size/batch_size 再试一次并把成功的记下来；也可强制 openai 或 aliases。"
+  },
+  "photo_keywords": {
+    "type": "list",
+    "description": "拍照触发词",
+    "default": [
+      "拍张照",
+      "拍一张",
+      "拍个照",
+      "拍张照片",
+      "拍一张照片",
+      "自拍",
+      "来张自拍",
+      "发张照片"
+    ],
+    "hint": "说这些话也会触发，但不带具体描述时用下面的默认提示词。"
+  },
+  "photo_default_prompt": {
+    "type": "string",
+    "description": "拍照默认提示词",
+    "default": "自拍，日常光线，自然表情，看向镜头",
+    "hint": "「给我拍张照」这种没内容的请求，用它来生成。"
   }
 }

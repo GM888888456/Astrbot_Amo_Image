@@ -64,14 +64,14 @@ def test_parse_url_response():
 
 
 def test_parse_b64_response():
-    raw = b"PNGDATA"
+    raw = b"PNGDATA" * 8
     payload = {"data": [{"b64_json": base64.b64encode(raw).decode()}]}
     kind, value = main.parse_image_response(payload)
     assert kind == "b64" and value == raw
 
 
 def test_parse_b64_data_uri():
-    raw = b"abc"
+    raw = b"abc" * 20
     payload = {"data": [{"b64_json": "data:image/png;base64," + base64.b64encode(raw).decode()}]}
     assert main.parse_image_response(payload) == ("b64", raw)
 
@@ -80,6 +80,67 @@ def test_parse_b64_data_uri():
 def test_parse_bad_response_raises(payload):
     with pytest.raises(ValueError):
         main.parse_image_response(payload)
+
+
+def test_parse_siliconflow_images_shape():
+    kind, value = main.parse_image_response({"images": [{"url": "https://x.test/b.png"}], "seed": 1})
+    assert kind == "url" and value == "https://x.test/b.png"
+
+
+def test_parse_output_urls_shape():
+    kind, value = main.parse_image_response({"output": {"urls": ["https://x.test/c.png"]}})
+    assert kind == "url" and value == "https://x.test/c.png"
+
+
+def test_parse_artifacts_base64_shape():
+    raw = b"ART" * 30
+    payload = {"artifacts": [{"base64": base64.b64encode(raw).decode()}]}
+    kind, value = main.parse_image_response(payload)
+    assert kind == "b64" and value == raw
+
+
+def test_body_styles():
+    p = make_plugin(size="1024x1024")
+    openai = p._body("猫", "openai")
+    aliases = p._body("猫", "aliases")
+    assert openai["size"] == "1024x1024" and openai["n"] == 1
+    assert aliases["image_size"] == "1024x1024" and aliases["batch_size"] == 1
+    assert "size" not in aliases and "image_size" not in openai
+
+
+def test_generate_retries_with_alias_style_on_400():
+    p = make_plugin()
+    calls = []
+
+    async def fake_post(url, body):
+        calls.append(dict(body))
+        if "size" in body:
+            raise main.APIError(400, "unknown field size")
+        return {"images": [{"url": "https://x.test/d.png"}]}
+
+    async def fake_download(url):
+        return b"IMG"
+
+    p._post_json = fake_post
+    p._download = fake_download
+    out = collect(p._generate("猫"))
+    assert out == b"IMG"
+    assert "image_size" in calls[-1]
+
+
+def test_photo_keyword_triggers_draw():
+    p = make_plugin()
+    seen = {}
+
+    async def fake_draw(event, prompt):
+        seen["prompt"] = prompt
+        if False:
+            yield None
+
+    p._draw = fake_draw
+    ev = _Event("给我拍张照", private=True)
+    collect(p.on_message(ev))
+    assert seen["prompt"] == "自拍，日常光线，自然表情，看向镜头"
 
 
 def test_build_prompt_order_and_context():

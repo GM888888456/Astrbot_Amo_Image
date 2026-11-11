@@ -42,8 +42,16 @@ try:
 except Exception:  # pragma: no cover - 没装 aiohttp 时退回线程 + urllib
     aiohttp = None  # type: ignore
 
+class APIError(RuntimeError):
+    """后端返回 >=400 时抛这个，带上状态码方便决定要不要换一套参数重试。"""
+
+    def __init__(self, status, message):
+        super().__init__("生图接口 %s: %s" % (status, message))
+        self.status = int(status or 0)
+
+
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.6.0"
+PLUGIN_VERSION = "0.7.0"
 
 DATA_PLUGIN_NAMES = (
     "Astr_Amo_data",
@@ -52,6 +60,11 @@ DATA_PLUGIN_NAMES = (
 )
 
 DEFAULT_KEYWORDS = ["画一张", "画个", "帮我画", "生成图片", "来张图", "画张"]
+DEFAULT_PHOTO_KEYWORDS = ["拍张照", "拍一张", "拍个照", "拍张照片", "拍一张照片",
+                          "自拍", "来张自拍", "发张照片"]
+# 「给我拍张照」去掉触发词后只剩「给我」，这些词不该当提示词
+_FILLER_WORDS = ("给我", "帮我", "帮忙", "请你", "请", "你", "我", "一张", "张",
+                 "照片", "图片", "一下", "吧", "呗", "看看")
 
 # 触发词后面常跟的标点/空白，去掉再当提示词
 _TRIM_CHARS = " \t\r\n，,。.：:；;、!！?？\"'“”‘’"
@@ -70,6 +83,22 @@ def clean_prompt(text: str, keyword: str) -> str:
     return body.strip(_TRIM_CHARS)
 
 
+def strip_filler(text: str) -> str:
+    """把「给我 / 帮我 / 一下」这类没信息量的词去掉，剩下的才当提示词。"""
+    body = str(text or "").strip()
+    changed = True
+    while changed and len(body) <= 6:
+        changed = False
+        for word in _FILLER_WORDS:
+            if body.startswith(word) and len(body) > len(word):
+                body = body[len(word):].strip(_TRIM_CHARS)
+                changed = True
+            elif body.endswith(word) and len(body) > len(word):
+                body = body[: -len(word)].strip(_TRIM_CHARS)
+                changed = True
+    return body
+
+
 def match_keyword(text: str, keywords) -> str:
     """返回命中的触发词（没命中返回空串）。长的优先，避免「画个」抢了「画个图」。"""
     body = str(text or "")
@@ -79,32 +108,85 @@ def match_keyword(text: str, keywords) -> str:
     return ""
 
 
+def _as_url(value):
+    text = str(value or "").strip()
+    return text if text.startswith("http://") or text.startswith("https://") else ""
+
+
+def _as_b64(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.startswith("data:"):
+        text = text.split(",", 1)[-1]
+    text = text.strip()
+    # 真图片的 base64 不会短；顺便 validate，避免把普通单词当图
+    if len(text) < 40:
+        return None
+    try:
+        return base64.b64decode(text, validate=True)
+    except Exception:
+        return None
+
+
+def _walk_candidates(node, depth=0):
+    """把各家返回结构摊平成「可能是 url / base64 的叶子」。
+
+    见过放图的地方不止一种：data[]、images[]、artifacts[]、results[]、
+    output.urls[]、result.images[]……这里不认厂商，只认形状。
+    """
+    if depth > 4:
+        return
+    if isinstance(node, str):
+        yield node
+        return
+    if isinstance(node, (list, tuple)):
+        for item in node:
+            yield from _walk_candidates(item, depth + 1)
+        return
+    if not isinstance(node, dict):
+        return
+    if any(key in node for key in ("url", "image_url", "imageUrl", "b64_json", "b64", "base64")):
+        yield node
+    for key in ("data", "images", "artifacts", "results", "output", "outputs",
+                "result", "image", "urls", "items"):
+        if key in node:
+            yield from _walk_candidates(node[key], depth + 1)
+
+
 def parse_image_response(payload) -> tuple:
     """解析生图响应，返回 (kind, value)：kind 是 url 或 b64。
 
-    兼容 data[0].url / data[0].b64_json；也容忍后端把 data 直接给成字符串列表。
+    不绑定厂商：OpenAI 的 data[0].url / data[0].b64_json、SiliconFlow 的
+    images[0].url、以及 output.urls[] / artifacts[].base64 之类都能认。
     """
-    if not isinstance(payload, dict):
-        raise ValueError("响应不是 JSON 对象")
-    data = payload.get("data")
-    if not data:
-        raise ValueError("响应里没有 data")
-    first = data[0] if isinstance(data, list) else data
-    if isinstance(first, str):
-        if first.startswith("http://") or first.startswith("https://"):
-            return ("url", first)
-        return ("b64", base64.b64decode(first))
-    if not isinstance(first, dict):
-        raise ValueError("data[0] 不是对象")
-    url = str(first.get("url") or "").strip()
-    if url.startswith("http://") or url.startswith("https://"):
-        return ("url", url)
-    b64 = str(first.get("b64_json") or first.get("b64") or "").strip()
-    if b64:
-        if b64.startswith("data:"):
-            b64 = b64.split(",", 1)[-1]
-        return ("b64", base64.b64decode(b64))
-    raise ValueError("data[0] 既没有 url 也没有 b64_json")
+    if isinstance(payload, (str, list)):
+        candidates = _walk_candidates(payload)
+    elif isinstance(payload, dict):
+        candidates = _walk_candidates(payload)
+    else:
+        raise ValueError("响应不是 JSON")
+
+    for item in candidates:
+        if isinstance(item, str):
+            url = _as_url(item)
+            if url:
+                return ("url", url)
+            data = _as_b64(item)
+            if data:
+                return ("b64", data)
+            continue
+        if not isinstance(item, dict):
+            continue
+        for key in ("url", "image_url", "imageUrl"):
+            url = _as_url(item.get(key))
+            if url:
+                return ("url", url)
+        for key in ("b64_json", "b64", "base64", "image_base64"):
+            data = _as_b64(item.get(key))
+            if data:
+                return ("b64", data)
+    raise ValueError("响应里找不到图片（data / images / artifacts 均无 url 或 base64）")
 
 
 def build_prompt(appearance: str, prompt: str, context_lines=None) -> str:
@@ -130,6 +212,7 @@ class AmoImagePlugin(Star):
         self._last_call = {}   # uid -> 上次生图时间
         self._daily = {}       # uid -> [日期字符串, 次数]
         self._history = deque(maxlen=40)   # 最近几次生图（面板用）
+        self._style_cache = {}             # endpoint -> 试通过的参数风格
         self._calls_total = 0
         self._started_at = time.time()
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -164,6 +247,12 @@ class AmoImagePlugin(Star):
         if isinstance(value, str):
             value = [x.strip() for x in value.split(",")]
         return [str(x) for x in (value or DEFAULT_KEYWORDS) if str(x).strip()]
+
+    def _photo_keywords(self):
+        value = self._cfg("photo_keywords", DEFAULT_PHOTO_KEYWORDS)
+        if isinstance(value, str):
+            value = [x.strip() for x in value.split(",")]
+        return [str(x) for x in (value or []) if str(x).strip()]
 
     # ---------- 数据插件联动 ----------
 
@@ -347,19 +436,30 @@ class AmoImagePlugin(Star):
             headers["Authorization"] = "Bearer " + key
         return headers
 
-    def _body(self, prompt: str) -> dict:
-        body = {
-            "model": str(self._cfg("model", "gpt-image-1")),
-            "prompt": prompt,
-            "n": max(1, self._int("n", 1)),
-            "size": str(self._cfg("size", "1024x1024")),
-        }
+    def _body(self, prompt: str, style: str = "openai") -> dict:
+        """请求体。不认厂商，只按「参数名风格」组装。
+
+        openai：size / n（+ quality / style）
+        aliases：image_size / batch_size —— 有些兼容层只认这两个名字
+        """
+        body = {"prompt": prompt}
+        model = str(self._cfg("model", "") or "").strip()
+        if model:
+            body["model"] = model
+        size = str(self._cfg("size", "1024x1024"))
+        count = max(1, self._int("n", 1))
+        if style == "aliases":
+            body["image_size"] = size
+            body["batch_size"] = count
+            return body
+        body["size"] = size
+        body["n"] = count
         quality = str(self._cfg("quality", "") or "").strip()
         if quality:
             body["quality"] = quality
-        style = str(self._cfg("style", "") or "").strip()
-        if style:
-            body["style"] = style
+        style_name = str(self._cfg("style", "") or "").strip()
+        if style_name:
+            body["style"] = style_name
         return body
 
     async def _post_json(self, url: str, body: dict) -> dict:
@@ -371,16 +471,25 @@ class AmoImagePlugin(Star):
                 async with session.post(url, data=raw, headers=self._headers()) as resp:
                     text = await resp.text()
                     if resp.status >= 400:
-                        raise RuntimeError("生图接口 %s: %s" % (resp.status, text[:200]))
+                        raise APIError(resp.status, text[:300])
                     return json.loads(text)
         return await asyncio.to_thread(self._post_json_blocking, url, raw, timeout)
 
     def _post_json_blocking(self, url: str, raw: bytes, timeout: float) -> dict:
+        import urllib.error
         import urllib.request
 
         req = urllib.request.Request(url, data=raw, headers=self._headers(), method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-            return json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8", "ignore")[:300]
+            except Exception:
+                pass
+            raise APIError(exc.code, detail) from exc
 
     async def _download(self, url: str) -> bytes:
         timeout = max(10.0, self._float("timeout", 90.0))
@@ -400,12 +509,37 @@ class AmoImagePlugin(Star):
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             return resp.read()
 
+    RETRY_STATUS = (400, 404, 415, 422)
+
+    def _style_order(self):
+        """参数风格顺序：配置指定就用指定的；auto 时先试上次成功的，再换另一种。"""
+        configured = str(self._cfg("request_style", "auto") or "auto").strip().lower()
+        if configured in ("openai", "aliases"):
+            return [configured]
+        cached = self._style_cache.get(self._endpoint(), "")
+        order = [cached] if cached in ("openai", "aliases") else []
+        for item in ("openai", "aliases"):
+            if item not in order:
+                order.append(item)
+        return order
+
     async def _generate(self, prompt: str) -> bytes:
-        payload = await self._post_json(self._endpoint(), self._body(prompt))
-        kind, value = parse_image_response(payload)
-        if kind == "url":
-            return await self._download(value)
-        return value
+        endpoint = self._endpoint()
+        errors = []
+        for style in self._style_order():
+            try:
+                payload = await self._post_json(endpoint, self._body(prompt, style))
+            except APIError as exc:
+                errors.append(str(exc))
+                # 只有「参数不认识 / 路径不对」才值得换一套参数重试；
+                # 401、429、5xx 换参数也没用，直接抛给上层。
+                if exc.status in self.RETRY_STATUS:
+                    continue
+                raise
+            self._style_cache[endpoint] = style
+            kind, value = parse_image_response(payload)
+            return await self._download(value) if kind == "url" else value
+        raise RuntimeError("；".join(errors[-2:]) or "生图接口没有可用的参数风格")
 
     # ---------- 面板 Web API ----------
 
@@ -584,14 +718,20 @@ class AmoImagePlugin(Star):
                 return
             if group and self._bool("require_at_in_group", False) and not self._is_at_me(event):
                 return
-            keyword = match_keyword(text, self._keywords())
+            photo_words = self._photo_keywords()
+            keyword = match_keyword(text, self._keywords() + photo_words)
             if not keyword:
                 return
-            prompt = clean_prompt(text, keyword)
+            prompt = strip_filler(clean_prompt(text, keyword))
             if len(prompt) < 2:
-                yield event.plain_result("想画什么？说具体点")
-                event.stop_event()   # 这条已经由生图插件处理，别再让陪伴/LLM 接一遍
-                return
+                # 「给我拍张照」这类没有具体内容，用默认自拍提示词；其它情况才反问
+                if keyword in photo_words:
+                    prompt = str(self._cfg("photo_default_prompt",
+                                           "自拍，日常光线，自然表情，看向镜头"))
+                else:
+                    yield event.plain_result("想画什么？说具体点")
+                    event.stop_event()
+                    return
             async for result in self._draw(event, prompt):
                 yield result
             event.stop_event()

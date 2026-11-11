@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.7.0（不绑定厂商的兼容层 + 拍照触发）
+
+### 1. 响应解析不再只认 OpenAI
+
+原来只认 `data[0].url` / `data[0].b64_json`，SiliconFlow 这类返回 `images[0].url` 的后端必然报
+「响应里没有 data」。现在改成按**形状**摊平找图，认这些位置：
+
+- `data[]`、`images[]`、`artifacts[]`、`results[]`、`output.urls[]`、`items[]`，嵌套几层都行；
+- 每个叶子认 `url` / `image_url` / `b64_json` / `b64` / `base64` / `image_base64`，也认 data URI 和纯 base64 字符串。
+
+### 2. 请求参数自动适配，不写死任何一家
+
+- `request_style=auto`（默认）：先按 OpenAI 的 `size`/`n` 发；如果后端回 400/404/415/422（参数或路径不认），
+  自动换成 `image_size`/`batch_size` 再试一次，成功后记住这个后端用哪套，下次直接用；
+- 401 / 429 / 5xx 不会瞎换参数重试；
+- 也可强制 `openai` 或 `aliases`；
+- `model` 默认改为空——各家模型名不同，代码不预设；留空就不发这个字段。
+
+### 3. 「拍张照」也能触发
+
+- 新增 `photo_keywords`（拍张照 / 拍一张 / 自拍 / 发张照片…）；
+- 去掉触发词后只剩「给我」「帮我」这类填充词的，用 `photo_default_prompt` 兜底，不再反问。
+
+测试 37 passed（新增响应形状、参数换用、拍照触发等用例）。
+
 ## 0.6.0（生图不生效修复 + 真正接上主插件）
 
 ### 1. 生图 handler 被陪伴插件截断，根本没执行
