@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
     )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.13.1"
+PLUGIN_VERSION = "0.13.2"
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
@@ -1077,6 +1077,9 @@ class AmoImagePlugin(Star):
     _LOOK_KEYS = (
         "外貌", "长相", "样子", "发色", "发型", "瞳色", "眼睛",
         "体型", "体型特征", "特征", "穿着", "服装", "皮肤",
+        # 身高体重年龄也算人物设定的一部分：模型不看数字，但「25岁 / 155cm / 娇小」
+        # 这类描述能帮它定住年龄感和体型，别每次画成不同的人
+        "年龄", "身高", "身高体重", "体重",
     )
     # 这些词说明是行为/性格，不是长相
     _BEHAVIOR_WORDS = (
@@ -1103,7 +1106,8 @@ class AmoImagePlugin(Star):
                 return
             if any(word in clause for word in cls._MINOR_WORDS):
                 return
-            if clause not in out:
+            clause = clause.replace(" / ", "，").replace("/", "，").strip("， ")
+            if clause and clause not in out:
                 out.append(clause)
 
         for line in str(text or "").splitlines():
@@ -1171,7 +1175,7 @@ class AmoImagePlugin(Star):
         """从人格设定里提取性别/外观/角色名，填进面板。"""
         text = await self._persona_text()
         clauses = self._look_clauses(text)
-        appearance = "，".join(clauses)
+        appearance = "，".join(clauses)[:160]
         source = "人格"
         if not text:
             source = "默认"

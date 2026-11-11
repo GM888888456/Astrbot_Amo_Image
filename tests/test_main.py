@@ -849,7 +849,10 @@ def test_persona_extract_skips_behavior_and_minor_words():
     assert data["persona"] == "秦晓沫"
     assert "翘尾巴" not in data["appearance"]
     assert "萝莉" not in data["appearance"]
-    assert "155cm" not in data["appearance"]
+    assert "25岁" in data["appearance"]
+    assert "155cm" in data["appearance"]
+    assert "50kg" in data["appearance"]
+    assert "轻盈软糯" in data["appearance"]
 
 
 def test_config_api_returns_masked_key_only():
