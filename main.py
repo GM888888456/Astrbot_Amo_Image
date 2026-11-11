@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
     )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.13.3"
+PLUGIN_VERSION = "0.14.0"
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
@@ -223,7 +223,8 @@ def match_keyword(text: str, keywords) -> str:
 
 def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "",
                  place: str = "", activity: str = "", gender: str = "",
-                 persona: str = "", camera: str = "") -> str:
+                 persona: str = "", camera: str = "",
+                 look_label: str = "今天的样子：") -> str:
     """拼最终提示词：性别 → 角色 → 外观 → 今日固定造型 → 地点/在干嘛 → 要求 → 上下文。
 
     性别和角色放在最前面，是因为模型默认会「猜」人物：不写性别就容易画出男的，
@@ -239,7 +240,7 @@ def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "
         parts.append(str(appearance).strip())
     # 陪伴那边的分享模板本身就带了 {place}，这里别再叠一遍「此刻在××」
     if str(look or "").strip() and str(look).strip() not in body:
-        parts.append("今天的样子：" + str(look).strip())
+        parts.append(str(look_label or "今天的样子：") + str(look).strip())
     if str(camera or "").strip():
         parts.append(str(camera).strip())
     where = str(place or "").strip()
@@ -925,17 +926,24 @@ class AmoImagePlugin(Star):
             return OTHER_CAMERA
         return SELFIE_CAMERA  # 没线索时按自拍：她要给人看的通常是自己的照片
 
+    def _scheduled_outfit(self):
+        """日程里这一段穿什么；陪伴没装/旧日程没有 outfit 时返回空。"""
+        activity = (self._companion_state().get("activity") or {})
+        return str(activity.get("outfit") or "").strip()
+
     def _appearance(self):
         """外观：没配就用保底描述，避免每次生成都换一张脸。"""
         value = str(self._cfg("character_appearance", "") or "").strip()
         return value or DEFAULT_APPEARANCE
 
     def _final_prompt(self, prompt, context_lines=None):
+        scheduled = self._scheduled_outfit()
         return build_prompt(
             self._appearance(),
             prompt,
             context_lines,
-            look=self._daily_look(),
+            look=scheduled or self._daily_look(),
+            look_label="此刻穿着：" if scheduled else "今天的样子：",
             place=self._scene_place(),
             activity=self._scene_activity(),
             gender=self._gender(),
@@ -1064,7 +1072,7 @@ class AmoImagePlugin(Star):
                 "groups_today": self._today_group_used(),
                 "calls_total": self._calls_total,
                 "history_size": len(self._history),
-                "look": self._daily_look(),
+                "look": self._scheduled_outfit() or self._daily_look(),
                 "uptime_seconds": int(time.time() - self._started_at),
             },
         })

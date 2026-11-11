@@ -300,17 +300,21 @@ def test_short_prompt_asks_for_detail():
 
 
 class FakeCompanionState:
-    def __init__(self, day="2026-11-11", clock="14:00", place="家", schedule=None):
+    def __init__(self, day="2026-11-11", clock="14:00", place="家", schedule=None, outfit=""):
         self.day = day
         self.clock = clock
         self.place = place
         self.schedule = schedule or {}
+        self.outfit = outfit
 
     def snapshot(self):
         return {"date": self.day, "time": self.clock}
 
     def current_activity(self):
-        return {"activity": "在家看书", "place": self.place}
+        item = {"activity": "在家看书", "place": self.place}
+        if self.outfit:
+            item["outfit"] = self.outfit
+        return item
 
 
 class FakeCompanion:
@@ -883,3 +887,18 @@ def test_final_prompt_carries_camera_angle():
     assert "第一人称" in selfie and "第三人称" not in selfie
     scene = p._final_prompt("窗边的猫")
     assert "第三人称" in scene and "第一人称" not in scene
+
+
+def test_schedule_outfit_wins_over_pool():
+    p = make_plugin(character_outfits=["JK 制服", "汉服"])
+    p._companion = lambda: FakeCompanion(outfit="白衬衫配西裤")
+    text = p._final_prompt("自拍")
+    assert "此刻穿着：白衬衫配西裤" in text
+    assert "JK 制服" not in text
+
+
+def test_schedule_outfit_absent_falls_back_to_pool():
+    p = make_plugin(character_outfits=["JK 制服"])
+    p._companion = lambda: FakeCompanion()
+    text = p._final_prompt("自拍")
+    assert "今天的样子：穿JK 制服" in text
