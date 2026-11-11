@@ -51,7 +51,7 @@ class APIError(RuntimeError):
 
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.7.0"
+PLUGIN_VERSION = "0.8.0"
 
 DATA_PLUGIN_NAMES = (
     "Astr_Amo_data",
@@ -540,6 +540,27 @@ class AmoImagePlugin(Star):
             kind, value = parse_image_response(payload)
             return await self._download(value) if kind == "url" else value
         raise RuntimeError("；".join(errors[-2:]) or "生图接口没有可用的参数风格")
+
+    async def draw_for(self, umo: str, uid: str = "", prompt: str = "") -> bytes | None:
+        """给别的插件（陪伴）用的公开出图接口：不接事件，直接返回图片字节。
+
+        失败/关闭/空提示词一律返回 None，绝不抛异常——调用方按「没画出来」处理即可。
+        """
+        if not self._bool("enable", True):
+            return None
+        prompt = str(prompt or "").strip()
+        if not prompt:
+            return None
+        try:
+            context_lines = await self._context_lines(str(umo or ""), str(uid or ""))
+            final_prompt = build_prompt(self._cfg("character_appearance", ""), prompt, context_lines)
+            data = await self._generate(final_prompt)
+        except Exception as exc:
+            logger.warning("[amo_image] draw_for 失败: %s" % exc)
+            return None
+        if data:
+            self._record(uid or "share", prompt, True, 0, len(data))
+        return data or None
 
     # ---------- 面板 Web API ----------
 

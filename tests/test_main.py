@@ -248,6 +248,21 @@ def test_short_prompt_asks_for_detail():
     assert out and out[0].kind == "plain" and "想画什么" in out[0].payload
 
 
+def test_draw_for_returns_bytes():
+    p = make_plugin()
+    p._generate = lambda prompt: _async(b"PNG")
+    assert collect(p.draw_for("umo", "u1", "窗边的猫")) == b"PNG"
+
+
+def test_draw_for_returns_none_on_error_or_disabled():
+    p = make_plugin()
+    p._generate = lambda prompt: _async_raise(RuntimeError("boom"))
+    assert collect(p.draw_for("umo", "u1", "猫")) is None
+    off = make_plugin(enable=False)
+    assert collect(off.draw_for("umo", "u1", "猫")) is None
+    assert collect(p.draw_for("umo", "u1", "")) is None
+
+
 def test_web_routes_registered():
     p = make_plugin()
     routes = [item["route"] for item in p.context.web_apis]
