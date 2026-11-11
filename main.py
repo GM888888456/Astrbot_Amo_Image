@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
     )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.15.0"
+PLUGIN_VERSION = "0.15.1"
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
@@ -1173,7 +1173,12 @@ class AmoImagePlugin(Star):
                 headers = self._headers()
                 payload = await self._get_json(url, headers)
                 names = self._collect_models(payload)
-            return self._json({"code": 0, "data": {"provider": provider, "models": names}})
+            current = str(self._cfg("model", "") or "").strip()
+            if current and current not in names:
+                names.insert(0, current)
+            return self._json({"code": 0, "data": {
+                "provider": provider, "models": names,
+                "current": current, "count": len(names)}})
         except Exception as exc:
             logger.warning("[amo_image] 拉模型列表失败: %s" % exc)
             return self._json({"code": 1, "message": "拉取失败：%s" % exc})

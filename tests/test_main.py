@@ -920,7 +920,10 @@ def test_api_models_returns_list():
     p._get_json = fake_get
     out = collect(p.api_models())
     assert out["code"] == 0
-    assert out["data"]["models"] == ["gpt-image-1", "flux-schnell"]
+    models = out["data"]["models"]
+    assert "gpt-image-1" in models and "flux-schnell" in models
+    # 当前配置的模型即使不在列表里也要保留，避免下拉框被清空
+    assert "test-model" in models
 
 
 def test_api_models_reports_failure():

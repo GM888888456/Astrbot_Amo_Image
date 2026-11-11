@@ -35,6 +35,7 @@ const els = {
   model: $("model"),
   modelHint: $("modelHint"),
   fetchModels: $("fetchModels"),
+  modelManual: $("modelManual"),
   save: $("save"),
   saveHint: $("saveHint"),
   prompt: $("prompt"),
@@ -175,13 +176,19 @@ async function loadModels(keepValue) {
     const models = result.models || [];
     if (!models.length) {
       els.modelHint.textContent = result.message || result.msg || "没拉到模型，检查 api_base / key";
+      els.modelManual.hidden = false;
       return;
     }
     const current = keepValue || $("model").value;
     $("model").innerHTML = models.map((name) =>
       '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + "</option>").join("");
     if (current && models.includes(current)) $("model").value = current;
-    els.modelHint.textContent = "共 " + models.length + " 个模型";
+    // 后端可能只返回聊天模型；图片模型不在列表里时允许手填一次
+    const hasImage = models.some((name) => /image|dall|flux|kolors|sd|draw|wanx|cogview/i.test(name));
+    els.modelManual.hidden = hasImage;
+    els.modelHint.textContent = hasImage
+      ? "共 " + models.length + " 个模型"
+      : "共 " + models.length + " 个模型，没看到图片模型；可在下面手填";
   } catch (err) {
     els.modelHint.textContent = "拉取失败：" + String(err.message || err);
   }
@@ -242,6 +249,8 @@ async function loadConfig() {
     $("character_outfits").value = Array.isArray(outfits) ? outfits.join("\n") : (outfits || "");
     const masked = data.api_key_masked || (/…/.test(data.api_key || "") ? data.api_key : "");
     $("api_key").value = "";
+    $("modelManual").value = "";
+    $("modelManual").hidden = true;
     $("api_key").placeholder = masked && masked !== "未配置"
       ? "已配置 " + masked + "（留空不改）"
       : "还没配置";
@@ -271,6 +280,8 @@ function collectConfig() {
   payload.camera_mode = $("camera_mode").value;
   payload.character_outfits = $("character_outfits").value
     .split("\n").map((line) => line.trim()).filter(Boolean);
+  const manual = $("modelManual").value.trim();
+  if (manual && !$("modelManual").hidden) payload.model = manual;
   const key = $("api_key").value.trim();
   if (key) payload.api_key = key;
   return payload;
@@ -290,6 +301,8 @@ els.save.addEventListener("click", async () => {
     if (saved.saved !== undefined || saved.applied) {
       els.saveHint.textContent = saved.saved ? "已保存并写回配置" : "已生效（当前配置对象不支持落盘）";
       $("api_key").value = "";
+    $("modelManual").value = "";
+    $("modelManual").hidden = true;
       await refresh();
       await loadConfig();
     } else {
