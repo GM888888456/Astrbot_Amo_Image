@@ -43,7 +43,7 @@ except Exception:  # pragma: no cover - 没装 aiohttp 时退回线程 + urllib
     aiohttp = None  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "0.5.1"
+PLUGIN_VERSION = "0.6.0"
 
 DATA_PLUGIN_NAMES = (
     "Astr_Amo_data",
@@ -168,13 +168,18 @@ class AmoImagePlugin(Star):
     # ---------- 数据插件联动 ----------
 
     @staticmethod
-    def _star_instance(meta):
-        """AstrBot 各版本把实例放在不同属性上，挨个试。"""
+    def _star_instance(meta, require_mem=True):
+        """AstrBot 各版本把实例放在不同属性上，挨个试。
+
+        require_mem=True 用于找数据插件（必须带 mem）；False 用于找陪伴主插件。
+        """
         if meta is None:
             return None
         for attr in ("star_cls", "instance", "star", "plugin"):
             value = getattr(meta, attr, None)
-            if value is not None and hasattr(value, "mem"):
+            if value is None:
+                continue
+            if not require_mem or hasattr(value, "mem"):
                 return value
         return None
 
@@ -197,6 +202,49 @@ class AmoImagePlugin(Star):
             pass
         return None
 
+    COMPANION_NAMES = ("Astrbot_Amo_forever", "astrbot_plugin_amo_forever", "amo_forever")
+
+    def _companion(self):
+        """找陪伴主插件实例；找不到返回 None。"""
+        try:
+            for name in self.COMPANION_NAMES:
+                star = self._star_instance(self.context.get_registered_star(name), require_mem=False)
+                if star is not None:
+                    return star
+        except Exception:
+            pass
+        try:
+            for meta in self.context.get_all_stars():
+                marker = (getattr(meta, "name", "") or "") + " " + (getattr(meta, "module_path", "") or "")
+                if "amo_forever" not in marker.lower():
+                    continue
+                star = self._star_instance(meta, require_mem=False)
+                if star is not None:
+                    return star
+        except Exception:
+            pass
+        return None
+
+    def _bot_id(self) -> str:
+        """和陪伴插件用同一个 bot_id，否则数据插件里的聊天记录读不到。"""
+        companion = self._companion()
+        if companion is not None:
+            getter = getattr(companion, "_data_bot_id", None)
+            if callable(getter):
+                try:
+                    value = str(getter() or "").strip()
+                    if value:
+                        return value
+                except Exception:
+                    pass
+            conf = getattr(companion, "config", None) or {}
+            value = str(conf.get("data_bot_id") or conf.get("bot_name") or "").strip()
+            if value:
+                return value
+        plugin = self._data_plugin()
+        conf = getattr(plugin, "config", None) or {}
+        return str(conf.get("bot_id") or "").strip()
+
     def _mem(self):
         plugin = self._data_plugin()
         return getattr(plugin, "mem", None) if plugin is not None else None
@@ -211,10 +259,11 @@ class AmoImagePlugin(Star):
         limit = max(1, self._int("memory_context_limit", 6))
         lines = []
         try:
+            bot_id = self._bot_id()
             if callable(getattr(mem, "messages_since", None)):
-                rows = await mem.messages_since(umo, uid=uid, since=0, limit=limit)
+                rows = await mem.messages_since(bot_id, uid=uid, since_ts=0, limit=limit)
             elif callable(getattr(mem, "recall_messages", None)):
-                got = await mem.recall_messages(umo, query="", umo=umo, uid=uid, limit=limit)
+                got = await mem.recall_messages(bot_id, query="", umo=umo, uid=uid, limit=limit)
                 rows = got.get("messages") if isinstance(got, dict) else got
             else:
                 rows = []
@@ -520,7 +569,7 @@ class AmoImagePlugin(Star):
 
     # ---------- 主链路 ----------
 
-    @filter.event_message_type(filter.EventMessageType.ALL)
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
     async def on_message(self, event: AstrMessageEvent):
         if not self._bool("enable", True):
             return
@@ -541,9 +590,11 @@ class AmoImagePlugin(Star):
             prompt = clean_prompt(text, keyword)
             if len(prompt) < 2:
                 yield event.plain_result("想画什么？说具体点")
+                event.stop_event()   # 这条已经由生图插件处理，别再让陪伴/LLM 接一遍
                 return
             async for result in self._draw(event, prompt):
                 yield result
+            event.stop_event()
         except Exception as exc:  # 兜底：绝不把异常抛回框架
             logger.warning("[amo_image] 处理消息失败: %s" % exc)
 

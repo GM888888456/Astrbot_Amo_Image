@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0（生图不生效修复 + 真正接上主插件）
+
+### 1. 生图 handler 被陪伴插件截断，根本没执行
+
+AstrBot 同一事件按 `priority` 串行跑 handler，且每个 handler 前判 `event.is_stopped()`。
+陪伴会把「这次不回」的私聊 `stop_event()`，生图原来 priority=0，排在后面就永远不执行。
+
+- `on_message` 改为 `priority=100`，稳定排在陪伴前面；
+- 图发出后（含「想画什么」和失败话术）主动 `stop_event()`，避免陪伴/LLM 再补一条造成双回复。
+
+### 2. 读上下文参数全错，TypeError 被静默吞掉
+
+数据插件的真实签名是 `messages_since(bot_id, uid, since_ts, limit)` /
+`recall_messages(bot_id, query, umo, uid, limit)`，生图原来把 `umo` 当第一个位置参数、
+又用了不存在的 `since=`，每次都在 `except` 里被吞掉，上下文永远是空。
+
+- 按真实签名传参；
+- 新增 `_companion()` / `_bot_id()`：从陪伴读 `data_bot_id`，保证读的是同一份记忆库；
+- `_star_instance` 增加 `require_mem`，能找到不带 `mem` 的陪伴主插件。
+
+### 说明
+
+这次建立的真实联系只有「同一 bot_id + 同一份记忆」。人物外观仍来自本插件自己的
+`character_appearance`；陪伴侧目前没有外观字段，硬塞 `persona_extra` 会变成整段人格描述。
+要做「陪伴主动发图 / 按心流配图」，需要在陪伴侧加明确的接口，不能靠猜。
+
+测试 31 passed（新增 stop_event、bot_id 两条用例）。
+
 ## 0.5.1
 
 - 版本号规则改为：测试版动末位、发布版动第二位、大版本动首位；不再限制奇偶与 1、7；

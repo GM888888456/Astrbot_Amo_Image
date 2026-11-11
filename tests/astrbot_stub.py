@@ -89,6 +89,7 @@ class _Event:
         self.message_obj = types.SimpleNamespace(message_id="mid-1", message=message or [])
         self.is_at_or_wake_command = at
         self.results = []
+        self.stopped = False
 
     def is_private_chat(self):
         return self._private
@@ -98,6 +99,9 @@ class _Event:
 
     def get_self_id(self):
         return "99999"
+
+    def stop_event(self):
+        self.stopped = True
 
     def plain_result(self, text):
         r = _Result("plain", text)
@@ -120,7 +124,7 @@ class _Filter:
         ALL = "*"
 
     @staticmethod
-    def event_message_type(_type):
+    def event_message_type(_type, **kwargs):
         def deco(fn):
             return fn
 

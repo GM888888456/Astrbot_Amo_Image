@@ -30,12 +30,12 @@ class FakeMem:
         self.rows = rows or []
         self.fail = fail
 
-    async def messages_since(self, umo, uid="", since=0, limit=10):
+    async def messages_since(self, bot_id, uid="", since_ts=0, limit=10):
         if self.fail:
             raise RuntimeError("db down")
         return self.rows[:limit]
 
-    async def recall_messages(self, umo, query="", **kw):
+    async def recall_messages(self, bot_id, query="", **kw):
         if self.fail:
             raise RuntimeError("db down")
         return {"messages": self.rows, "label": ""}
@@ -227,6 +227,30 @@ def test_api_test_reports_failure():
     p._generate = lambda prompt: _async_raise(RuntimeError("boom"))
     out = collect(p.api_test())
     assert out["code"] == 1 and "boom" in out["message"]
+
+
+def test_handled_message_stops_event():
+    """生图处理过就必须 stop_event，否则陪伴/LLM 会再补一条。"""
+    p = make_plugin()
+    p._generate = lambda prompt: _async(b"PNG")
+    ev = _Event("画一张猫", private=False)
+    collect(p.on_message(ev))
+    assert ev.stopped is True
+
+    ev2 = _Event("画一张", private=True)
+    collect(p.on_message(ev2))
+    assert ev2.stopped is True
+
+
+def test_bot_id_from_companion():
+    p = make_plugin()
+
+    class FakeCompanion:
+        def _data_bot_id(self):
+            return "botX"
+
+    p._companion = lambda: FakeCompanion()
+    assert p._bot_id() == "botX"
 
 
 def test_command_status_reports_backend():
