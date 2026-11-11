@@ -62,7 +62,16 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
     )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.6.0"
+PLUGIN_VERSION = "1.6.1"
+try:  # 版本号以 metadata.yaml 为准，避免两处不一致
+    import yaml as _amo_meta_yaml
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
+              encoding="utf-8") as _amo_meta_fh:
+        _amo_meta = _amo_meta_yaml.safe_load(_amo_meta_fh) or {}
+    if _amo_meta.get("version"):
+        PLUGIN_VERSION = str(_amo_meta["version"])
+except Exception:
+    pass
 
 # 服装池留空时的保底：宁可穿得普通，也不能每次随机换一身
 DEFAULT_OUTFITS = [
