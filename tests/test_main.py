@@ -595,7 +595,11 @@ def test_negative_prompt_sent_and_dropped_on_400():
     p._post_json = fake_post
     p._download = fake_download
     assert collect(p._generate("猫")) == b"PNG"
-    assert calls[0].get("negative_prompt") == "different face"
+    negative = calls[0].get("negative_prompt") or ""
+    assert negative.startswith("different face")
+    # 一致性/姿势是硬约束，会并入负面词，不会因为用户只写一句就丢掉
+    assert "different background" in negative
+    assert "抱臂" in negative
     assert "negative_prompt" not in calls[1]
     # 记住这个后端不认，下次不再浪费一次 400
     assert p._negative_ok[p._endpoint()] is False
@@ -607,7 +611,9 @@ def test_place_not_duplicated_when_prompt_already_has_it():
     p = make_plugin(character_outfits=["JK 制服"])
     p._companion = lambda: FakeCompanion(place="家")
     text = p._final_prompt("自拍，在家看书，自然光")
-    assert text.count("家") == 1
+    # 「此刻在××」只应出现一次：提示词里已经写了地点就不再重复
+    assert "此刻在家" not in text
+    assert text.count("在家看书") == 1
 
 
 def test_draw_for_respects_content_boundaries():
@@ -652,7 +658,10 @@ def test_command_draw_blocks_unsafe_prompt():
     p._generate = lambda prompt: _async(b"PNG")
     ev = _Event()
     out = collect(p.amoimage(ev, "draw", "裸体"))
-    assert out and out[0].kind == "plain" and "画不了" in out[0].payload
+    assert out and out[0].kind == "plain"
+    # 不能出现「画不了」这类机器话，要说人话
+    assert "画不了" not in out[0].payload
+    assert "画不出来" not in out[0].payload
 
 
 def test_gender_and_persona_and_activity_in_prompt():
@@ -662,7 +671,8 @@ def test_gender_and_persona_and_activity_in_prompt():
     text = p._final_prompt("在窗边看书")
     assert text.startswith("女生")
     assert "角色：Amo" in text
-    assert "此刻在城郊的湖边，正在在家看书" in text
+    # 「正在在家看书」这种叠字要消掉，读起来才像话
+    assert "此刻在城郊的湖边，正在家看书" in text
 
 
 def test_gender_auto_from_appearance():
@@ -969,3 +979,87 @@ def test_wardrobe_proxy_delegates():
     out = collect(p.api_wardrobe())
     assert out["data"]["items"][0]["name"] == "红裙子"
     assert fake.called == 1
+
+
+# ---------- 批量：一次画完，一次发出去 ----------
+
+
+def test_batch_draw_sends_one_message_with_all_images():
+    p = make_plugin(batch_max=4, reply_prefix="")
+    calls = []
+
+    async def fake_generate(prompt):
+        calls.append(prompt)
+        return b"PNG"
+
+    p._generate = fake_generate
+    ev = _Event(private=True)
+    out = collect(p._draw_batch(ev, "猫\n狗"))
+    assert len(calls) == 2
+    assert len(out) == 1, "两张图必须合成一条消息，不能刷屏"
+    assert out[0].kind == "chain"
+    images = [c for c in out[0].payload if isinstance(c, _Image)]
+    assert len(images) == 2
+
+
+def test_batch_single_prompt_goes_through_normal_path():
+    p = make_plugin(batch_max=4)
+    p._generate = lambda prompt: _async(b"PNG")
+    out = collect(p._draw_batch(_Event(private=True), "猫在窗边"))
+    assert len(out) == 1 and out[0].kind == "chain"
+
+
+def test_batch_partial_failure_still_sends_the_rest():
+    p = make_plugin(batch_max=4)
+    calls = []
+
+    async def fake_generate(prompt):
+        calls.append(prompt)
+        if "狗" in prompt:
+            raise RuntimeError("boom")
+        return b"PNG"
+
+    p._generate = fake_generate
+    out = collect(p._draw_batch(_Event(private=True), "猫\n狗\n兔子"))
+    assert len(calls) == 3
+    assert len(out) == 1
+    images = [c for c in out[0].payload if isinstance(c, _Image)]
+    assert len(images) == 2, "坏掉一张不该把另外两张也吞掉"
+
+
+def test_batch_all_failed_uses_human_fallback():
+    p = make_plugin(batch_max=4)
+
+    async def boom(prompt):
+        raise RuntimeError("down")
+
+    p._generate = boom
+    out = collect(p._draw_batch(_Event(private=True), "猫\n狗"))
+    assert out and out[0].kind == "plain"
+    assert "画不出来" not in out[0].payload
+
+
+def test_batch_respects_limit():
+    p = make_plugin(batch_max=2)
+    calls = []
+
+    async def fake_generate(prompt):
+        calls.append(prompt)
+        return b"PNG"
+
+    p._generate = fake_generate
+    collect(p._draw_batch(_Event(private=True), "a\nb\nc\nd"))
+    assert len(calls) == 2
+
+
+def test_negative_prompt_has_no_duplicates():
+    p = make_plugin(negative_prompt="different face")
+    items = [x.strip().lower() for x in p._negative().split(",") if x.strip()]
+    assert len(items) == len(set(items)), "负面词里有重复项"
+
+
+def test_activity_leading_zai_is_collapsed():
+    p = make_plugin()
+    p._companion = lambda: FakeCompanion(place="家")
+    text = p._final_prompt("看书")
+    assert "正在在" not in text

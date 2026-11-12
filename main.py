@@ -61,8 +61,29 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
         ratio_from_size,
     )
 
+try:
+    from .consistency import (
+        CONSISTENCY_NEGATIVE,
+        FACE_LOCK,
+        POSE_NEGATIVE,
+        pose_clause,
+        match_scene,
+        scene_anchor,
+        split_prompts,
+    )
+except Exception:  # pragma: no cover - 直接以脚本方式加载时
+    from consistency import (  # type: ignore
+        CONSISTENCY_NEGATIVE,
+        FACE_LOCK,
+        POSE_NEGATIVE,
+        pose_clause,
+        match_scene,
+        scene_anchor,
+        split_prompts,
+    )
+
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.6.1"
+PLUGIN_VERSION = "1.6.2"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -101,6 +122,20 @@ SELFIE_WORDS = ("自拍", "拍你", "拍我", "看看你", "你的照片", "自�
 OTHER_WORDS = ("他", "她", "朋友", "猫", "狗", "宠物", "一起", "合影", "全身", "背影",
                "桌上", "风景", "街", "店", "咖啡", "蛋糕", "花", "书", "电脑", "相机",
                "天空", "海", "山", "路", "窗外", "雨", "食物", "菜", "画")
+
+# 兜底话术：不要说「画不了 / 生成失败」这类机器话，像人一样推一下时间。
+# 随机取一条，免得每次都同一句，露馅。
+FALLBACK_LINES = (
+    "等我一下，这会儿手头有点事，晚点拍给你",
+    "现在不太方便，等下有光了再给你拍",
+    "先欠你一张，晚点补上",
+    "这里拍出来不好看，回去再拍",
+)
+BLOCKED_LINES = (
+    "这个不行啦",
+    "这个我不拍",
+    "换个别的嘛",
+)
 
 # 没配外观时的保底描述：宁可普通，也不能每次换一张脸
 DEFAULT_APPEARANCE = "长发，五官清秀，自然妆容，日常穿搭"
@@ -171,7 +206,7 @@ WEB_BOOL_KEYS = frozenset({
 })
 WEB_INT_KEYS = frozenset({
     "n", "timeout", "cooldown_seconds", "private_daily_limit", "group_daily_limit",
-    "memory_context_limit", "outfit_change_cooldown_minutes",
+    "memory_context_limit", "outfit_change_cooldown_minutes", "batch_max",
 })
 WEB_LIST_KEYS = frozenset({"character_outfits", "outfit_change_keywords", "keywords", "photo_keywords"})
 
@@ -232,7 +267,8 @@ def match_keyword(text: str, keywords) -> str:
 
 def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "",
                  place: str = "", activity: str = "", gender: str = "",
-                 persona: str = "", camera: str = "",
+                 persona: str = "", camera: str = "", scene: str = "",
+                 pose: str = "", face: str = "",
                  look_label: str = "今天的样子：") -> str:
     """拼最终提示词：性别 → 角色 → 外观 → 今日固定造型 → 地点/在干嘛 → 要求 → 上下文。
 
@@ -256,7 +292,10 @@ def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "
     doing = str(activity or "").strip()
     if where and where not in body:
         if doing and doing not in body:
-            parts.append("此刻在%s，正在%s" % (where, doing[:40]))
+            doing_text = doing[:40]
+            if doing_text.startswith("在"):
+                doing_text = doing_text[1:]
+            parts.append("此刻在%s，正在%s" % (where, doing_text))
         else:
             parts.append("此刻在" + where)
     elif doing and doing not in body:
@@ -267,6 +306,13 @@ def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "
         tail = "；".join([str(x).strip() for x in context_lines if str(x).strip()][-6:])
         if tail:
             parts.append("画面要接得上这段对话：%s" % tail)
+    # 脸 / 环境 / 姿势：这三条决定「一眼看出是不是同一个场景里的同一个人」
+    if str(face or "").strip():
+        parts.append(str(face).strip())
+    if str(scene or "").strip() and str(scene).strip() not in body:
+        parts.append(str(scene).strip())
+    if str(pose or "").strip():
+        parts.append(str(pose).strip())
     if str(appearance or "").strip() or str(look or "").strip():
         parts.append("同一个人，脸、发型、服装保持一致，不要换成别的装扮")
     return "，".join(parts)
@@ -570,11 +616,33 @@ class AmoImagePlugin(Star):
             headers["Authorization"] = "Bearer " + key
         return headers
 
+    def _fallback_line(self, kind: str = "error") -> str:
+        """兜底话术：优先用配置里的，配置留空或还是旧默认值就用内置的人话。"""
+        key = "error_reply" if kind == "error" else "blocked_reply"
+        value = str(self._cfg(key, "") or "").strip()
+        pool = FALLBACK_LINES if kind == "error" else BLOCKED_LINES
+        legacy = ("画不出来，等会儿再试试", "这个画不了，换个描述吧")
+        if value and value not in legacy:
+            return value
+        return pool[int(time.time()) % len(pool)]
+
     def _negative(self) -> str:
+        """负面词 = 用户配置 + 一致性 + 姿势。
+
+        后两段是硬约束，不放进配置项里让人误删：换脸、换背景、手机入镜、抱臂
+        这几样一出现，图就「不像同一个场景」了。
+        """
         value = self._cfg("negative_prompt", DEFAULT_NEGATIVE_PROMPT)
         if value is None:
             value = DEFAULT_NEGATIVE_PROMPT
-        return str(value).strip()
+        base = str(value).strip()
+        items: list[str] = []
+        for chunk in [base, CONSISTENCY_NEGATIVE, POSE_NEGATIVE]:
+            for item in str(chunk or "").split(","):
+                item = item.strip()
+                if item and item.lower() not in {x.lower() for x in items}:
+                    items.append(item)
+        return ", ".join(items)
 
     def _body(self, prompt: str, style: str = "openai", negative: str = "") -> dict:
         """请求体。不认厂商，只按「参数名风格」组装。
@@ -975,6 +1043,20 @@ class AmoImagePlugin(Star):
             return OTHER_CAMERA
         return SELFIE_CAMERA  # 没线索时按自拍：她要给人看的通常是自己的照片
 
+    def _is_selfie(self, prompt) -> bool:
+        """这句是不是自拍。姿势约束要靠它分叉：自拍必须拿着手机，他拍不能出现手机。"""
+        mode = str(self._cfg("camera_mode", "自动") or "自动").strip()
+        if mode in ("自拍", "selfie"):
+            return True
+        if mode in ("他拍", "third", "第三人称"):
+            return False
+        value = str(prompt or "")
+        if any(word in value for word in SELFIE_WORDS):
+            return True
+        if any(word in value for word in OTHER_WORDS):
+            return False
+        return True
+
     def _scheduled_outfit(self):
         """日程里这一段穿什么；陪伴没装/旧日程没有 outfit 时返回空。"""
         activity = (self._companion_state().get("activity") or {})
@@ -985,20 +1067,98 @@ class AmoImagePlugin(Star):
         value = str(self._cfg("character_appearance", "") or "").strip()
         return value or DEFAULT_APPEARANCE
 
+    def _last_scene(self) -> str:
+        try:
+            with open(self._scene_state_path(), "r", encoding="utf-8") as handle:
+                return str((json.load(handle) or {}).get("scene") or "").strip()
+        except Exception:
+            return ""
+
+    def _scene_state_path(self):
+        return os.path.join(self._plugin_data_dir(), "scene_lock.json")
+
+    def _remember_scene(self, place: str) -> str:
+        """地点读得到就记住；读不到就沿用上次的，宁可重复也不让背景乱跳。"""
+        scene = match_scene(place)
+        if not scene:
+            return self._last_scene()
+        try:
+            root = self._plugin_data_dir()
+            os.makedirs(root, exist_ok=True)
+            with open(self._scene_state_path(), "w", encoding="utf-8") as handle:
+                json.dump({"place": place, "scene": scene}, handle, ensure_ascii=False)
+        except Exception as exc:
+            logger.debug("[amo_image] 记录环境失败: %s" % exc)
+        return scene
+
     def _final_prompt(self, prompt, context_lines=None):
         scheduled = self._scheduled_outfit()
+        place = self._scene_place()
+        scene = self._remember_scene(place)
+        selfie = self._is_selfie(prompt)
         return build_prompt(
             self._appearance(),
             prompt,
             context_lines,
             look=scheduled or self._daily_look(),
             look_label="此刻穿着：" if scheduled else "今天的样子：",
-            place=self._scene_place(),
+            place=place,
             activity=self._scene_activity(),
             gender=self._gender(),
             persona=self._persona(),
             camera=self._camera(prompt),
+            scene=scene_anchor(place, scene),
+            pose=pose_clause(selfie),
+            face=self._face_clause(),
         )
+
+    def _face_clause(self):
+        """脸的锁定句。
+
+        模型的「同一个人」靠不住，得把五官拆开点名；首张图生成后还会把当时的
+        外观描述冻结下来（`face_lock.json`），以后即使用户改了配置，脸也不跟着变。
+        """
+        anchor = self._face_anchor()
+        parts = [FACE_LOCK]
+        if anchor:
+            parts.append("既定形象：" + anchor)
+        return "。".join(parts)
+
+    def _face_lock_path(self):
+        root = self._plugin_data_dir()
+        return os.path.join(root, "face_lock.json")
+
+    def _face_anchor(self):
+        """首张图定下的外观描述；没有就返回空串。"""
+        try:
+            with open(self._face_lock_path(), "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return str((data or {}).get("appearance") or "").strip()
+        except Exception:
+            return ""
+
+    def _freeze_face(self) -> None:
+        """第一次成功出图时把外观冻结下来；已经冻结过就不动。"""
+        if self._face_anchor():
+            return
+        try:
+            root = self._plugin_data_dir()
+            os.makedirs(root, exist_ok=True)
+            with open(self._face_lock_path(), "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "appearance": self._appearance(),
+                        "gender": self._gender(),
+                        "hairstyle": str(self._cfg("character_hairstyle", "") or ""),
+                        "frozen_at": int(time.time()),
+                    },
+                    handle,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            logger.info("[amo_image] 已冻结基准脸：%s" % self._appearance()[:40])
+        except Exception as exc:
+            logger.debug("[amo_image] 冻结基准脸失败: %s" % exc)
 
     async def draw_for(self, umo: str, uid: str = "", prompt: str = "") -> bytes | None:
         """给别的插件（陪伴）用的公开出图接口：不接事件，直接返回图片字节。
@@ -1031,6 +1191,7 @@ class AmoImagePlugin(Star):
             # 主动分享算群额度，但不占用户的下一次冷却
             self._mark_call(str(uid or ""), str(umo or ""), group, cooldown=False)
             self._record(uid or "share", prompt, True, 0, len(data))
+            self._freeze_face()
         return data or None
 
     # ---------- 面板 Web API ----------
@@ -1143,7 +1304,7 @@ class AmoImagePlugin(Star):
             "allow_private", "allow_group", "require_at_in_group", "quote_in_group",
             "keywords", "photo_keywords", "photo_default_prompt", "cooldown_seconds",
             "private_daily_limit", "group_daily_limit",
-            "safe_mode", "blocked_reply", "reply_prefix", "error_reply",
+            "safe_mode", "blocked_reply", "reply_prefix", "error_reply", "batch_max",
             "character_hairstyle", "character_outfits", "character_gender",
             "character_persona", "camera_mode", "outfit_change_keywords",
             "outfit_change_cooldown_minutes", "lock_scene_to_schedule",
@@ -1466,6 +1627,7 @@ class AmoImagePlugin(Star):
             self._record("panel", prompt, False, int((time.time() - started) * 1000), 0)
             return self._fail("后端返回空")
         self._record("panel", prompt, True, int((time.time() - started) * 1000), len(data))
+        self._freeze_face()
         return self._json({
             "code": 0,
             "data": {
@@ -1555,10 +1717,10 @@ class AmoImagePlugin(Star):
                     event.stop_event()
                     return
             if not self._safe_text(prompt, group):
-                yield event.plain_result(str(self._cfg("blocked_reply", "这个画不了，换个描述吧")))
+                yield event.plain_result(self._fallback_line("blocked"))
                 event.stop_event()
                 return
-            async for result in self._draw(event, prompt):
+            async for result in self._draw_batch(event, prompt):
                 yield result
             event.stop_event()
         except Exception as exc:  # 兜底：绝不把异常抛回框架
@@ -1569,11 +1731,11 @@ class AmoImagePlugin(Star):
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         group = self._is_group(event)
         if not self._safe_text(prompt, group):
-            yield event.plain_result(str(self._cfg("blocked_reply", "这个画不了，换个描述吧")))
+            yield event.plain_result(self._fallback_line("blocked"))
             return
         ok, note = self._quota_ok(uid, umo, group)
         if not ok:
-            yield event.plain_result(note or str(self._cfg("error_reply", "画不出来，等会儿再试试")))
+            yield event.plain_result(note or self._fallback_line("error"))
             return
         ctx = self._clean_context(await self._context_lines(umo, uid), group)
         final_prompt = self._final_prompt(prompt, ctx)
@@ -1584,15 +1746,79 @@ class AmoImagePlugin(Star):
         except Exception as exc:
             logger.warning("[amo_image] 生图失败: %s" % exc)
             self._record(uid, prompt, False, int((time.time() - started) * 1000), 0)
-            yield event.plain_result(str(self._cfg("error_reply", "画不出来，等会儿再试试")))
+            yield event.plain_result(self._fallback_line("error"))
             return
         if not data:
             logger.warning("[amo_image] 生图返回空")
             self._record(uid, prompt, False, int((time.time() - started) * 1000), 0)
-            yield event.plain_result(str(self._cfg("error_reply", "画不出来，等会儿再试试")))
+            yield event.plain_result(self._fallback_line("error"))
             return
         self._record(uid, prompt, True, int((time.time() - started) * 1000), len(data))
+        self._freeze_face()
         yield self._result(event, data, str(self._cfg("reply_prefix", "") or ""))
+
+    async def _draw_batch(self, event, prompt: str):
+        """一条指令里写了多张时：全部画完，**一次性发出去**，不一张一张刷屏。
+
+        分割只在明确的分隔符（换行/分号/竖线）上做，「猫和狗」仍然是一张。
+        """
+        prompts = split_prompts(prompt, self._int("batch_max", 4))
+        if len(prompts) <= 1:
+            async for result in self._draw(event, prompt):
+                yield result
+            return
+
+        uid = str(getattr(event, "get_sender_id", lambda: "")() or "")
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        group = self._is_group(event)
+        ok, note = self._quota_ok(uid, umo, group)
+        if not ok:
+            yield event.plain_result(note or self._fallback_line("error"))
+            return
+        ctx = self._clean_context(await self._context_lines(umo, uid), group)
+        self._mark_call(uid, umo, group)
+
+        images: list = []
+        for item in prompts:
+            if not self._safe_text(item, group):
+                logger.info("[amo_image] 批量里有一条被内容边界拦下")
+                continue
+            started = time.time()
+            try:
+                data = await self._generate(self._final_prompt(item, ctx))
+            except Exception as exc:
+                logger.warning("[amo_image] 批量生图失败: %s" % exc)
+                self._record(uid, item, False, int((time.time() - started) * 1000), 0)
+                continue
+            if not data:
+                self._record(uid, item, False, int((time.time() - started) * 1000), 0)
+                continue
+            self._record(uid, item, True, int((time.time() - started) * 1000), len(data))
+            self._freeze_face()
+            images.append(data)
+
+        if not images:
+            yield event.plain_result(self._fallback_line("error"))
+            return
+        yield self._result_many(event, images, str(self._cfg("reply_prefix", "") or ""))
+
+    def _result_many(self, event, images: list, prefix: str = ""):
+        """多张图一条消息发出去（QQ 会聚合成一次发送）。"""
+        text = str(prefix or "").strip()
+        try:
+            chain = []
+            if self._bool("quote_in_group", True) and self._is_group(event):
+                mid = getattr(getattr(event, "message_obj", None), "message_id", None)
+                if mid:
+                    chain.append(Reply(id=mid))
+            if text:
+                chain.append(Plain(text=text))
+            for data in images:
+                chain.append(Image.fromBytes(data))
+            return event.chain_result(chain)
+        except Exception as exc:
+            logger.debug("[amo_image] 批量 chain_result 失败，退回逐张发送: %s" % exc)
+            return self._result(event, images[0], prefix)
 
     # ---------- 命令 ----------
 
@@ -1633,7 +1859,7 @@ class AmoImagePlugin(Star):
             if not prompt:
                 yield event.plain_result("用法：/amoimage draw <提示词>")
                 return
-            async for result in self._draw(event, prompt):
+            async for result in self._draw_batch(event, prompt):
                 yield result
             return
         yield event.plain_result("用法：/amoimage status ｜ draw <提示词> ｜ outfit")

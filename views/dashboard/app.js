@@ -10,7 +10,7 @@ const TEXT_FIELDS = [
 ];
 const NUMBER_FIELDS = [
   "n", "outfit_change_cooldown_minutes", "cooldown_seconds",
-  "private_daily_limit", "group_daily_limit",
+  "private_daily_limit", "group_daily_limit", "batch_max",
 ];
 const CHECK_FIELDS = [
   "chat_modalities", "lock_scene_to_schedule", "enable", "safe_mode",

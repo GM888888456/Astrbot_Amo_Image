@@ -193,8 +193,8 @@
   "blocked_reply": {
     "type": "string",
     "description": "被拦时的回复",
-    "default": "这个画不了，换个描述吧",
-    "hint": "命中内容边界时回这一句，不会透露具体命中了什么。"
+    "default": "",
+    "hint": "留空 = 用内置的人话（「这个不拍」这类）。命中内容边界时回一句，不透露具体原因。"
   },
   "private_daily_limit": {
     "type": "int",
@@ -217,8 +217,8 @@
   "error_reply": {
     "type": "string",
     "description": "失败话术",
-    "default": "画不出来，等会儿再试试",
-    "hint": "后端报错、超时、返回空时回这一句，不抛异常。"
+    "default": "",
+    "hint": "留空 = 用内置的人话（「等我一下，晚点拍给你」这类，随机一条）。不建议写「画不出来」，那不像人说话。"
   },
   "request_style": {
     "type": "string",
@@ -288,5 +288,11 @@
     "description": "负面提示词",
     "default": "different face, different hairstyle, different clothes, different person, change location, other scenic spot, blurry, low quality, extra fingers",
     "hint": "支持 negative_prompt 的后端（Kolors / SiliconFlow 等）会带上；不支持的会自动去掉重试，不会报错。留空则不传。"
+  },
+  "batch_max": {
+    "type": "int",
+    "description": "一条指令最多几张",
+    "default": 4,
+    "hint": "用换行、分号或竖线分隔多个提示词，一次画完一次性发出。设 1 = 关闭批量。"
   }
 }
