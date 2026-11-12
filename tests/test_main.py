@@ -1063,3 +1063,20 @@ def test_activity_leading_zai_is_collapsed():
     p._companion = lambda: FakeCompanion(place="家")
     text = p._final_prompt("看书")
     assert "正在在" not in text
+
+
+def test_draw_error_does_not_consume_quota():
+    """出图失败不扣每日额度：不然她今天会凭空少画一张。"""
+    p = make_plugin(group_daily_limit=2)
+    p._generate = lambda prompt: _async_raise(RuntimeError("502"))
+    event = _Event("画一张猫", private=False)
+    collect(p._draw(event, "猫"))
+    assert p.quota("", "umo", True)["used"] == 0
+
+
+def test_draw_success_consumes_quota():
+    p = make_plugin(group_daily_limit=2)
+    p._generate = lambda prompt: _async(b"\x89PNG\r\n")
+    event = _Event("画一张猫", private=False)
+    collect(p._draw(event, "猫"))
+    assert p.quota("", "umo", True)["used"] == 1

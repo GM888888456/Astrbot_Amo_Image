@@ -88,7 +88,7 @@ except Exception:  # pragma: no cover
     from link import probe as _link_probe, summary as _link_summary  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.7.3"
+PLUGIN_VERSION = "1.7.4"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -1770,7 +1770,6 @@ class AmoImagePlugin(Star):
             return
         ctx = self._clean_context(await self._context_lines(umo, uid), group)
         final_prompt = self._final_prompt(prompt, ctx)
-        self._mark_call(uid, umo, group)
         started = time.time()
         try:
             data = await self._generate(final_prompt)
@@ -1784,6 +1783,8 @@ class AmoImagePlugin(Star):
             self._record(uid, prompt, False, int((time.time() - started) * 1000), 0)
             yield event.plain_result(self._fallback_line("error"))
             return
+        # 只有真的拿到图才扣额度、占冷却：失败不该让她今天少画一张
+        self._mark_call(uid, umo, group)
         self._record(uid, prompt, True, int((time.time() - started) * 1000), len(data))
         self._freeze_face()
         yield self._result(event, data, str(self._cfg("reply_prefix", "") or ""))
@@ -1807,7 +1808,6 @@ class AmoImagePlugin(Star):
             yield event.plain_result(note or self._fallback_line("error"))
             return
         ctx = self._clean_context(await self._context_lines(umo, uid), group)
-        self._mark_call(uid, umo, group)
 
         images: list = []
         for item in prompts:
@@ -1829,8 +1829,10 @@ class AmoImagePlugin(Star):
             images.append(data)
 
         if not images:
+            # 一张都没成功：不扣额度、不占冷却
             yield event.plain_result(self._fallback_line("error"))
             return
+        self._mark_call(uid, umo, group)
         yield self._result_many(event, images, str(self._cfg("reply_prefix", "") or ""))
 
     def _result_many(self, event, images: list, prefix: str = ""):
