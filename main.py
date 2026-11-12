@@ -82,8 +82,13 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
         split_prompts,
     )
 
+try:
+    from .link import probe as _link_probe, summary as _link_summary
+except Exception:  # pragma: no cover
+    from link import probe as _link_probe, summary as _link_summary  # type: ignore
+
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.6.3"
+PLUGIN_VERSION = "1.7.0"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -550,6 +555,26 @@ class AmoImagePlugin(Star):
         except Exception:
             pass
         return False
+
+    def quota(self, uid: str = "", umo: str = "", group: bool = False) -> dict:
+        """今天还能画几张。**每日张数只在这里记**，终端不再自己保存一份。
+
+        返回 {"allowed", "used", "limit", "remaining"}；limit=0 表示不限量。
+        """
+        today = time.strftime("%Y-%m-%d")
+        if group:
+            limit = max(0, self._int("group_daily_limit", 20))
+            record = self._daily_group.get(str(umo or "")) or [today, 0]
+        else:
+            limit = max(0, self._int("private_daily_limit", 0))
+            record = self._daily.get(str(uid or "")) or [today, 0]
+        used = int(record[1]) if record and record[0] == today else 0
+        return {
+            "allowed": True if not limit else used < limit,
+            "used": used,
+            "limit": limit,
+            "remaining": (limit - used) if limit else -1,
+        }
 
     def _quota_ok(self, uid: str, umo: str = "", group: bool = False) -> tuple:
         """冷却 + 每日次数。私聊默认不限量，群聊按群每天 20 张。"""
@@ -1200,6 +1225,7 @@ class AmoImagePlugin(Star):
         """把面板接口挂到 /Astrbot_Amo_Image/*；注册失败只记日志，不影响生图。"""
         routes = [
             ("/status", self.api_status, ["GET"]),
+            ("/health", self.api_health, ["GET"]),
             ("/history", self.api_history, ["GET"]),
             ("/config", self.api_config, ["GET"]),
             ("/config/save", self.api_save_config, ["POST"]),
@@ -1265,10 +1291,15 @@ class AmoImagePlugin(Star):
                 total += int(record[1])
         return total
 
+    async def api_health(self):
+        """我自己连没连上终端/记忆库。面板顶部那一行就看这个。"""
+        return self._json({"code": 0, "data": _link_probe(self)})
+
     async def api_status(self):
         return self._json({
             "code": 0,
             "data": {
+                "link": _link_probe(self),
                 "name": PLUGIN_NAME,
                 "version": PLUGIN_VERSION,
                 "enabled": self._bool("enable", True),
