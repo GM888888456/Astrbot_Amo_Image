@@ -88,7 +88,7 @@ except Exception:  # pragma: no cover
     from link import probe as _link_probe, summary as _link_summary  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.7.4"
+PLUGIN_VERSION = "1.7.5"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -329,6 +329,29 @@ class AmoImagePlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
         self.config = config or {}
+
+        # 配置自愈：升级/重装/改目录名之后，把空掉的 key 从快照补回来。
+        # 快照在 plugin_data/<插件名>/config_snapshot.json（0600），升级不覆盖、
+        # schema 重写也删不到它。
+        try:
+            from .config_guard import heal as _cfg_heal, fallback_data_dir as _cfg_data_dir
+        except ImportError:
+            try:
+                from config_guard import heal as _cfg_heal, fallback_data_dir as _cfg_data_dir
+            except Exception:
+                _cfg_heal = None
+        if _cfg_heal is not None:
+            try:
+                _guard_dir = os.path.dirname(os.path.abspath(__file__))
+                _healed = _cfg_heal(self.config, plugin_name=PLUGIN_NAME,
+                                    plugin_dir=_guard_dir,
+                                    data_dir=_cfg_data_dir(_guard_dir, PLUGIN_NAME),
+                                    logger=logger)
+                if _healed.get("restored"):
+                    logger.info("[config] 本次启动补回 %d 项配置（%s）"
+                                % (len(_healed["restored"]), ", ".join(_healed["restored"])))
+            except Exception as exc:
+                logger.debug("[config] 配置自愈失败: %s" % exc)
         self._last_call = {}   # uid -> 上次生图时间
         self._daily = {}       # uid -> [日期字符串, 次数]
         self._daily_group = {} # umo -> [日期字符串, 次数]
@@ -861,7 +884,7 @@ class AmoImagePlugin(Star):
                     return value
             except Exception:
                 continue
-        return os.path.join(os.path.dirname(self.plugin_dir), "plugin_data", name)
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(self.plugin_dir))), "plugin_data", name)
 
     def _look_state_path(self):
         root = self._plugin_data_dir()

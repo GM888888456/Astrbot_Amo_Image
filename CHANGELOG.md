@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.5（配置自愈 + 数据目录修正）
+
+- 同其它插件接入 `config_guard`；顺带修正 `_plugin_data_dir()`——少上跳一级，`look_state/face_lock/scene_lock` 以前会写到 `plugins/plugin_data/` 下面。
+
 ## 1.7.4（失败不扣额度）
 
 - 出图失败不再扣每日额度、也不占冷却：只有真的拿到图才 `_mark_call()`；
