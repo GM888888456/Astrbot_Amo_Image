@@ -37,7 +37,8 @@ class SceneTests(unittest.TestCase):
 
     def test_empty_place(self):
         self.assertEqual(match_scene(""), "")
-        self.assertEqual(scene_anchor(""), "")
+        # 地点空也必须给一个中性环境：留空 = 让模型自由发挥 = 背景乱跳
+        self.assertIn("环境：", scene_anchor(""))
 
     def test_scene_anchor_contains_lock(self):
         anchor = scene_anchor("公司")

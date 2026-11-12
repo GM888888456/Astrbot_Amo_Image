@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""我想和你度日常（生图联动）插件。"""
+"""我想永远陪着你-相片（生图联动）插件。"""
 
 from .main import AmoImagePlugin, PLUGIN_NAME, PLUGIN_VERSION
 

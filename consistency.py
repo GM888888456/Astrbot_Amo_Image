@@ -131,15 +131,20 @@ def match_scene(place: str) -> str:
     return FALLBACK_SCENES[index % len(FALLBACK_SCENES)]
 
 
-def scene_anchor(place: str, fallback_scene: str = "") -> str:
-    """给提示词用的环境块。
+#: 地点彻底未知时用的中性环境：必须有一条，否则模型会把背景画成任何东西。
+NEUTRAL_SCENE = (
+    "室内，浅色墙面，木质地板，靠墙一张木桌，桌上有一盏台灯和几本书，"
+    "侧窗透进自然光"
+)
 
-    地点为空（没装陪伴、日程没写地点）时用上次记住的环境，而不是干脆不写：
-    不写就等于让模型自由发挥，背景立刻开始跳。
+
+def scene_anchor(place: str, fallback_scene: str = "") -> str:
+    """给提示词用的环境块，**永远不为空**。
+
+    优先级：地点能识别 → 用对应场景；识别不了 → 用上次记住的；再没有 → 用中性
+    室内场景。留空就等于让模型自由发挥，背景会一张一个样。
     """
-    scene = match_scene(place) or str(fallback_scene or "").strip()
-    if not scene:
-        return ""
+    scene = match_scene(place) or str(fallback_scene or "").strip() or NEUTRAL_SCENE
     return "环境：" + scene + "。" + ENV_LOCK
 
 

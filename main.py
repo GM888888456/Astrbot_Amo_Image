@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""我想和你度日常（Astrbot_Amo_Image）：生图联动。
+"""我想永远陪着你-相片（Astrbot_Amo_Image）：生图联动。
 
-给「我想永远陪伴你」（Astrbot_Amo_forever）和「我想永远记住你」（Astr_Amo_data）
+给「我想永远陪着你-终端」（Astrbot_Amo_forever）和「我想永远陪着你-记忆」（Astr_Amo_data）
 配套的第三块：**只负责画图**。
 
 - 人设外观从 `character_appearance` 读，拼在提示词最前面，保证每次是同一个人；
@@ -83,7 +83,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
     )
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.6.2"
+PLUGIN_VERSION = "1.6.3"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -391,7 +391,7 @@ class AmoImagePlugin(Star):
         return None
 
     def _data_plugin(self):
-        """找「我想永远记住你」的实例；没装就 None。"""
+        """找「我想永远陪着你-记忆」的实例；没装就 None。"""
         try:
             for name in DATA_PLUGIN_NAMES:
                 star = self._star_instance(self.context.get_registered_star(name))
