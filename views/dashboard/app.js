@@ -127,6 +127,7 @@ function syncCustomBlock() {
 $("provider").addEventListener("change", syncCustomBlock);
 
 function renderStatus(data) {
+  if (data && data.link) amoLinkRender(data.link);
   const on = !!data.enabled;
   els.enablePill.textContent = on ? "已启用" : "已关闭";
   els.enablePill.className = "pill" + (on ? "" : " off");
@@ -446,8 +447,18 @@ function amoLinkRender(d) {
   box.title = d.error || "";
 }
 
+async function amoLinkFetch() {
+  try { return unwrap(await get("health")); } catch (e) { return null; }
+}
 async function amoLinkLoad() {
-  try { amoLinkRender(unwrap(await get("health"))); } catch (e) { amoLinkRender(null); }
+  // 面板脚本比 AstrBot 的桥接先跑，头几次拿不到数据是正常的：
+  // 等桥接就绪再重试，别一上来就把「读不到」画给人看。
+  for (let i = 0; i < 20; i += 1) {
+    const d = await amoLinkFetch();
+    if (d) { amoLinkRender(d); return; }
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  amoLinkRender(null);
 }
 
 amoLinkLoad();
