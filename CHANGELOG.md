@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.3（包初始化兼容单测/CI）
+
+- `__init__.py` 改成「先相对导入，失败退回 `from main import …`」：非包方式加载（pytest/CI 直接收集）时不再报 `attempted relative import with no known parent package`。
+- 生图业务逻辑无改动。
+
 ## 1.8.2（环境跟着地点走，不再随机室内）
 
 - `draw_for(place, activity, zone)` / `_final_prompt(place, activity, zone)` / `_remember_scene(zone)`：Amo 给的这一处地点和场景类型是唯一真相，换地点后不许沿用上一张的场景。
