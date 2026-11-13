@@ -558,6 +558,31 @@ def test_outfit_command_text_triggers_change(tmp_path):
     assert ev2.stopped is False
 
 
+def test_scene_follows_amo_place_and_zone(tmp_path):
+    """说在酒店就画酒店：换地点后不许沿用上一张的户外场景。"""
+    p = make_plugin()
+    p.plugin_dir = str(tmp_path)
+    p._companion = lambda: FakeCompanion(day="2026-11-13", clock="14:00",
+                                         place="南阳·老界岭恐龙遗址园")
+    park = p._final_prompt("自拍", selfie=True, place="南阳·老界岭恐龙遗址园",
+                           activity="在景区逛", zone="scenic")
+    hotel = p._final_prompt("自拍", selfie=True, place="南阳·酒店房间",
+                            activity="在酒店躺着", zone="hotel")
+    assert "户外" in park
+    assert "酒店客房" in hotel
+    assert "户外" not in hotel, "换到酒店后不许再沿用上一张的户外场景"
+
+
+def test_scenic_spot_name_without_景区_word_still_outdoor(tmp_path):
+    """「恐龙遗址园」这种名字里没有「景区」两个字的，也要按 zone 画成户外。"""
+    p = make_plugin()
+    p.plugin_dir = str(tmp_path)
+    p._companion = lambda: FakeCompanion(day="2026-11-13", clock="14:00")
+    prompt = p._final_prompt("自拍", selfie=True, place="南阳·恐龙遗址园", zone="scenic")
+    assert "户外" in prompt
+    assert "室内" not in prompt.split("环境：")[1][:40]
+
+
 def test_amo_selfie_flag_beats_scenic_place_words():
     """Amo 说这是自拍就是自拍：地点里的「山/店/路」不许把它翻成第三人称。"""
     p = make_plugin()

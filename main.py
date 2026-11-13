@@ -92,7 +92,7 @@ except Exception:  # pragma: no cover
     from link import probe as _link_probe, summary as _link_summary  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.8.1"
+PLUGIN_VERSION = "1.8.2"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -1077,6 +1077,13 @@ class AmoImagePlugin(Star):
         activity = state.get("activity") or {}
         return str(activity.get("place") or "").strip()
 
+    def _scene_zone(self):
+        """日程里的场景类型（hotel/scenic/home…）；锁日程才用。"""
+        if not self._bool("lock_scene_to_schedule", True):
+            return ""
+        activity = (self._companion_state().get("activity") or {})
+        return str(activity.get("zone") or "").strip().lower()
+
     def _scene_activity(self):
         """此刻在干嘛；和地点一样来自日程，避免图和日程对不上。"""
         if not self._bool("lock_scene_to_schedule", True):
@@ -1171,11 +1178,15 @@ class AmoImagePlugin(Star):
     def _scene_state_path(self):
         return os.path.join(self._plugin_data_dir(), "scene_lock.json")
 
-    def _remember_scene(self, place: str) -> str:
-        """地点读得到就记住；读不到就沿用上次的，宁可重复也不让背景乱跳。"""
-        scene = match_scene(place)
+    def _remember_scene(self, place: str, strict: bool = False, zone: str = "") -> str:
+        """地点读得到就记住；读不到就沿用上次的，宁可重复也不让背景乱跳。
+
+        ``strict=True``：地点是 Amo 明确给的（这一轮唯一真相），没识别出来也不许
+        回落到上次那张图的场景——否则就是「她说在酒店、照片还是昨天的公园」。
+        """
+        scene = match_scene(place, zone=zone)
         if not scene:
-            return self._last_scene()
+            return "" if strict else self._last_scene()
         try:
             root = self._plugin_data_dir()
             os.makedirs(root, exist_ok=True)
@@ -1192,10 +1203,16 @@ class AmoImagePlugin(Star):
         text = str(prompt or "")
         return any(word in text for word in self.FOOD_PROP_WORDS)
 
-    def _final_prompt(self, prompt, context_lines=None, selfie=None):
+    def _final_prompt(self, prompt, context_lines=None, selfie=None,
+                      place=None, activity=None, zone=None):
         scheduled = self._scheduled_outfit()
-        place = self._scene_place()
-        scene = self._remember_scene(place)
+        # 地点/活动由 Amo 给的话就是唯一真相：不再自己读一遍状态，
+        # 也不许回落到「上次那张图的场景」（那正是「说在酒店、照片在公园」的来源）。
+        explicit = str(place or "").strip()
+        place = explicit or self._scene_place()
+        zone_key = str(zone or "").strip() or self._scene_zone()
+        scene = self._remember_scene(place, strict=bool(explicit), zone=zone_key)
+        activity_text = str(activity or "").strip() or self._scene_activity()
         # selfie 是 Amo 的明确判定；没给才由我们按提示词推
         selfie_flag = self._is_selfie(prompt, forced=selfie)
         with_prop = self._has_food_prop(prompt)
@@ -1206,11 +1223,11 @@ class AmoImagePlugin(Star):
             look=scheduled or self._daily_look(),
             look_label="此刻穿着：" if scheduled else "今天的样子：",
             place=place,
-            activity=self._scene_activity(),
+            activity=activity_text,
             gender=self._gender(),
             persona=self._persona(),
             camera=self._camera(prompt, forced=selfie),
-            scene=scene_anchor(place, scene),
+            scene=scene_anchor(place, scene, zone=zone_key),
             pose=pose_clause(selfie_flag, with_prop=with_prop),
             face=self._face_clause(),
             selfie=selfie_flag,
@@ -1266,7 +1283,8 @@ class AmoImagePlugin(Star):
             logger.debug("[amo_image] 冻结基准脸失败: %s" % exc)
 
     async def draw_for(self, umo: str, uid: str = "", prompt: str = "",
-                       selfie: bool | None = None) -> bytes | None:
+                       selfie: bool | None = None, place: str = "",
+                       activity: str = "", zone: str = "") -> bytes | None:
         """给别的插件（陪伴）用的公开出图接口：不接事件，直接返回图片字节。
 
         失败/关闭/空提示词一律返回 None，绝不抛异常——调用方按「没画出来」处理即可。
@@ -1288,7 +1306,8 @@ class AmoImagePlugin(Star):
             context_lines = self._clean_context(
                 await self._context_lines(str(umo or ""), str(uid or "")), group
             )
-            final_prompt = self._final_prompt(prompt, context_lines, selfie=selfie)
+            final_prompt = self._final_prompt(prompt, context_lines, selfie=selfie,
+                                             place=place, activity=activity, zone=zone)
             data = await self._generate(final_prompt)
         except Exception as exc:
             logger.warning("[amo_image] draw_for 失败: %s" % exc)

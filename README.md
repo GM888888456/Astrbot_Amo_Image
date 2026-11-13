@@ -9,6 +9,13 @@
 给 Amo 做生图联动的第三个插件：聊天里说一句「画一张……」，她按人设把画面画出来。
 它只负责画图，不参与聊天判定、不改 AstrBot 核心链路。
 
+## 1.8.2（环境跟着地点走，不再随机室内）
+
+- `draw_for(place, activity, zone)` / `_final_prompt(place, activity, zone)` / `_remember_scene(zone)`：Amo 给的这一处地点和场景类型是唯一真相，换地点后不许沿用上一张的场景。
+- `match_scene(place, zone)` + `ZONE_SCENES`：按日程的 hotel/scenic/home/street… 直接定场景，景点名字里没有「景区」两个字也不会被画成室内（「恐龙遗址园」这类）。
+- 场景表补「酒店/宾馆/民宿/客房」；`scene_anchor` 优先级修正为先认调用方解析好的场景，不再被地点重算覆盖。
+- 家补「小窝/出租屋」别名。
+
 ## 1.8.1（自拍判定听 Amo 的）
 
 - `draw_for(..., selfie=None)` / `_final_prompt(..., selfie=)` / `_camera(forced=)` / `_is_selfie(forced=)`：陪伴插件给的判定优先，不再去扫整段拼好的提示词。
