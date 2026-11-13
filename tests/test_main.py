@@ -543,7 +543,8 @@ def test_manual_outfit_change_moves_to_next_look(tmp_path):
 
 
 def test_outfit_command_text_triggers_change(tmp_path):
-    p = make_plugin(character_outfits=["A 套", "B 套"])
+    # 独立模式（mount_only=false）才自己认整句指令；中央集权下由 Amo 下发
+    p = make_plugin(character_outfits=["A 套", "B 套"], mount_only=False)
     p.plugin_dir = str(tmp_path)
     p._companion = lambda: FakeCompanion(day="2026-11-11", clock="12:00")
     ev = _Event("换一套衣服", private=True)
@@ -555,6 +556,33 @@ def test_outfit_command_text_triggers_change(tmp_path):
     ev2 = _Event("我想换一套衣服再出门", private=True)
     assert collect(p.on_message(ev2)) == []
     assert ev2.stopped is False
+
+
+def test_mount_mode_hands_decisions_to_companion(tmp_path):
+    """有 Amo 在就不抢答：关键词/换装都不自己判，只等它下发。"""
+    p = make_plugin(character_outfits=["A 套", "B 套"])
+    p.plugin_dir = str(tmp_path)
+    p._companion = lambda: FakeCompanion(day="2026-11-11", clock="12:00")
+    assert p.mount_mode() is True
+    for text in ("拍张照", "换一套衣服", "画一张海边"):
+        ev = _Event(text, private=True)
+        assert collect(p.on_message(ev)) == []
+        assert ev.stopped is False
+    # 关掉 mount_only 或 Amo 不在时才回到独立模式
+    assert make_plugin(mount_only=False).mount_mode() is False
+    bare = make_plugin()
+    bare._companion = lambda: None
+    assert bare.mount_mode() is False
+
+
+def test_change_outfit_for_is_executor_api(tmp_path):
+    """Amo 下发换装：执行者只返回造型，不自己发消息。"""
+    p = make_plugin(character_outfits=["A 套", "B 套", "C 套"])
+    p.plugin_dir = str(tmp_path)
+    p._companion = lambda: FakeCompanion(day="2026-11-11", clock="12:00")
+    before = p._daily_look()
+    look = p.change_outfit_for("Amo 下发")
+    assert look and look != before
 
 
 def test_outfit_command_with_wake_prefix(tmp_path):

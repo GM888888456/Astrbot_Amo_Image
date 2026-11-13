@@ -92,7 +92,7 @@ except Exception:  # pragma: no cover
     from link import probe as _link_probe, summary as _link_summary  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.7.8"
+PLUGIN_VERSION = "1.8.0"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -469,6 +469,30 @@ class AmoImagePlugin(Star):
         except Exception:
             pass
         return None
+
+    def mount_mode(self) -> bool:
+        """中央集权：陪伴主插件（Amo）在的时候，我只当执行者。
+
+        判定权全在 Amo：它决定这轮要不要图、换不换装、发不发；我只负责出图
+        （``draw_for``）和给造型（``change_outfit_for``）。没装 Amo（或 Amo 被禁用）
+        时才回到独立模式，免得整条链路哑掉。
+        """
+        if not self._bool("mount_only", True):
+            return False
+        return self._companion() is not None
+
+    def change_outfit_for(self, reason: str = "") -> str:
+        """执行者入口：换下一套造型并返回造型描述；发不发、怎么说由 Amo 决定。"""
+        if not self._bool("enable", True):
+            return ""
+        try:
+            look = str(self._change_outfit() or "")
+        except Exception as exc:
+            logger.debug("[amo_image] 换装失败: %s" % exc)
+            return ""
+        if look:
+            logger.info("[amo_image] 执行换装（%s）：%s" % (reason or "mount", look))
+        return look
 
     def _bot_id(self) -> str:
         """和陪伴插件用同一个 bot_id，否则数据插件里的聊天记录读不到。"""
@@ -1760,6 +1784,14 @@ class AmoImagePlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
     async def on_message(self, event: AstrMessageEvent):
         if not self._bool("enable", True):
+            return
+        if not getattr(self, "_mount_logged", False):
+            self._mount_logged = True
+            logger.info("[amo_image] 挂载模式：%s"
+                        % ("判定交给 Amo（我名下所有关键词都不抢答）"
+                           if self.mount_mode() else "独立模式（自己认词）"))
+        if self.mount_mode():
+            # 中央集权：有 Amo 在，要不要图、要不要换装都由它下发，我不抢答
             return
         try:
             text = str(getattr(event, "message_str", "") or "").strip()

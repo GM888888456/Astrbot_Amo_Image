@@ -5,6 +5,12 @@
     "default": true,
     "hint": "总开关。关掉后任何触发词和 /amoimage 都不响应。"
   },
+  "mount_only": {
+    "type": "bool",
+    "description": "只当执行者（中央集权）",
+    "default": true,
+    "hint": "开着：聊天里的生图/拍照/换装都由陪伴插件 Amo 判定并下发，本插件只管出图和造型，不抢答、不自己发消息。关掉：本插件自己认关键词（Amo 没装时才需要）。"
+  },
   "provider": {
     "type": "string",
     "description": "生图后端类型",
