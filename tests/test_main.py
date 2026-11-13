@@ -143,6 +143,13 @@ def test_photo_keyword_triggers_draw():
     assert seen["prompt"] == "自拍，日常光线，自然表情，看向镜头"
 
 
+def test_build_prompt_selfie_directive():
+    got = main.build_prompt("", "自拍", selfie=True)
+    assert got.startswith("【这是一张自拍】")
+    assert "没有摄影师" in got
+    assert "直视镜头" in got
+
+
 def test_build_prompt_order_and_context():
     got = main.build_prompt("银灰长发", "在雨里撑伞", ["他说想一起去看海", "她说好啊"])
     assert got.startswith("银灰长发，在雨里撑伞")
@@ -789,7 +796,7 @@ def test_empty_appearance_falls_back_to_default():
     p._companion = lambda: FakeCompanion(place="家")
     text = p._final_prompt("自拍")
     assert main.DEFAULT_APPEARANCE in text
-    assert text.startswith("女生")
+    assert "女生" in text
 
 
 class FakeLLM:

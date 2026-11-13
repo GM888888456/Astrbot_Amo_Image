@@ -66,6 +66,7 @@ try:
         CONSISTENCY_NEGATIVE,
         FACE_LOCK,
         POSE_NEGATIVE,
+        SELFIE_DIRECTIVE,
         pose_clause,
         match_scene,
         scene_anchor,
@@ -76,6 +77,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
         CONSISTENCY_NEGATIVE,
         FACE_LOCK,
         POSE_NEGATIVE,
+        SELFIE_DIRECTIVE,
         pose_clause,
         match_scene,
         scene_anchor,
@@ -88,7 +90,7 @@ except Exception:  # pragma: no cover
     from link import probe as _link_probe, summary as _link_summary  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.7.6"
+PLUGIN_VERSION = "1.7.7"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -120,7 +122,8 @@ DEFAULT_NEGATIVE_PROMPT = (
 OUTFIT_COMMANDS = ("换一套衣服", "换套衣服", "换身衣服", "换衣服", "换一件衣服")
 
 # 拍摄角度：拍自己=自拍（前置、第一人称）；拍别人/别的东西=他拍（第三人称，别人拿手机）
-SELFIE_CAMERA = "手机前置摄像头，第一人称视角，靠近镜头"
+SELFIE_CAMERA = ("手机前置摄像头，第一人称自拍视角，镜头在她手里、靠近脸，"
+                 "近景半身，直视镜头，不是别人拿手机拍")
 OTHER_CAMERA = "他拍，第三人称视角，对面的人拿手机拍，画面里不要出现拿手机的人"
 SELFIE_WORDS = ("自拍", "拍你", "拍我", "看看你", "你的照片", "自拍照", "前置",
                 "镜头对着自己", "来张自拍", "发张自拍")
@@ -273,7 +276,7 @@ def match_keyword(text: str, keywords) -> str:
 def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "",
                  place: str = "", activity: str = "", gender: str = "",
                  persona: str = "", camera: str = "", scene: str = "",
-                 pose: str = "", face: str = "",
+                 pose: str = "", face: str = "", selfie: bool = False,
                  look_label: str = "今天的样子：") -> str:
     """拼最终提示词：性别 → 角色 → 外观 → 今日固定造型 → 地点/在干嘛 → 要求 → 上下文。
 
@@ -282,6 +285,8 @@ def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "
     """
     parts = []
     body = str(prompt or "")
+    if selfie:
+        parts.append(SELFIE_DIRECTIVE)
     if str(gender or "").strip():
         parts.append(str(gender).strip())
     if str(persona or "").strip() and str(persona).strip() not in body:
@@ -1158,6 +1163,7 @@ class AmoImagePlugin(Star):
             scene=scene_anchor(place, scene),
             pose=pose_clause(selfie),
             face=self._face_clause(),
+            selfie=selfie,
         )
 
     def _face_clause(self):
