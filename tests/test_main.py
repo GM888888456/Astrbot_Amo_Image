@@ -558,6 +558,27 @@ def test_outfit_command_text_triggers_change(tmp_path):
     assert ev2.stopped is False
 
 
+def test_amo_selfie_flag_beats_scenic_place_words():
+    """Amo 说这是自拍就是自拍：地点里的「山/店/路」不许把它翻成第三人称。"""
+    p = make_plugin()
+    p._companion = lambda: FakeCompanion(day="2026-11-13", clock="14:00",
+                                         place="南阳·老界岭恐龙遗址园 街边小店 山路上")
+    prompt = p._final_prompt("给我拍张照，看看你在景区", selfie=True)
+    assert main.SELFIE_CAMERA in prompt
+    assert main.OTHER_CAMERA not in prompt
+    # 没给判定时才按提示词推（这里「风景/街/店」会推成他拍，说明强制位真的起作用）
+    auto = p._final_prompt("画一张街边的风景，小店门口")
+    assert main.OTHER_CAMERA in auto
+
+
+def test_forced_other_camera_is_respected():
+    p = make_plugin()
+    p._companion = lambda: FakeCompanion(day="2026-11-13", clock="14:00")
+    prompt = p._final_prompt("给我拍张照", selfie=False)
+    assert main.OTHER_CAMERA in prompt
+    assert main.SELFIE_CAMERA not in prompt
+
+
 def test_mount_mode_hands_decisions_to_companion(tmp_path):
     """有 Amo 在就不抢答：关键词/换装都不自己判，只等它下发。"""
     p = make_plugin(character_outfits=["A 套", "B 套"])

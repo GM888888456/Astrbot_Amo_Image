@@ -92,7 +92,7 @@ except Exception:  # pragma: no cover
     from link import probe as _link_probe, summary as _link_summary  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.8.0"
+PLUGIN_VERSION = "1.8.1"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -1111,17 +1111,23 @@ class AmoImagePlugin(Star):
             name = str(conf.get("persona_name") or conf.get("bot_name") or "").strip()
         return name
 
-    def _camera(self, prompt):
+    def _camera(self, prompt, forced=None):
         """拍摄角度：拍自己=自拍，拍别人/别的东西=他拍。
 
         这条不写，模型会把「桌上的一杯咖啡」也画成怼脸自拍，或者把「自拍」画成
         别人站在对面拍——角度错了比衣服错了还明显。
+
+        ``forced`` 是陪伴插件（唯一大脑）给的明确判定：True 自拍 / False 他拍。
+        给了就以它为准——不能再去扫拼好的整段提示词，那里有地点（…山…/…街…/…店…），
+        会把「自拍」误判成他拍（踩过的坑：在景区自拍被画成路人举着手机拍）。
         """
         mode = str(self._cfg("camera_mode", "自动") or "自动").strip()
         if mode in ("自拍", "selfie"):
             return SELFIE_CAMERA
         if mode in ("他拍", "third", "第三人称"):
             return OTHER_CAMERA
+        if forced is not None:
+            return SELFIE_CAMERA if forced else OTHER_CAMERA
         value = str(prompt or "")
         if any(word in value for word in SELFIE_WORDS):
             return SELFIE_CAMERA
@@ -1129,13 +1135,15 @@ class AmoImagePlugin(Star):
             return OTHER_CAMERA
         return SELFIE_CAMERA  # 没线索时按自拍：她要给人看的通常是自己的照片
 
-    def _is_selfie(self, prompt) -> bool:
+    def _is_selfie(self, prompt, forced=None) -> bool:
         """这句是不是自拍。姿势约束要靠它分叉：自拍必须拿着手机，他拍不能出现手机。"""
         mode = str(self._cfg("camera_mode", "自动") or "自动").strip()
         if mode in ("自拍", "selfie"):
             return True
         if mode in ("他拍", "third", "第三人称"):
             return False
+        if forced is not None:
+            return bool(forced)
         value = str(prompt or "")
         if any(word in value for word in SELFIE_WORDS):
             return True
@@ -1184,11 +1192,12 @@ class AmoImagePlugin(Star):
         text = str(prompt or "")
         return any(word in text for word in self.FOOD_PROP_WORDS)
 
-    def _final_prompt(self, prompt, context_lines=None):
+    def _final_prompt(self, prompt, context_lines=None, selfie=None):
         scheduled = self._scheduled_outfit()
         place = self._scene_place()
         scene = self._remember_scene(place)
-        selfie = self._is_selfie(prompt)
+        # selfie 是 Amo 的明确判定；没给才由我们按提示词推
+        selfie_flag = self._is_selfie(prompt, forced=selfie)
         with_prop = self._has_food_prop(prompt)
         return build_prompt(
             self._appearance(),
@@ -1200,12 +1209,12 @@ class AmoImagePlugin(Star):
             activity=self._scene_activity(),
             gender=self._gender(),
             persona=self._persona(),
-            camera=self._camera(prompt),
+            camera=self._camera(prompt, forced=selfie),
             scene=scene_anchor(place, scene),
-            pose=pose_clause(selfie, with_prop=with_prop),
+            pose=pose_clause(selfie_flag, with_prop=with_prop),
             face=self._face_clause(),
-            selfie=selfie,
-            no_prop=(selfie and not with_prop),
+            selfie=selfie_flag,
+            no_prop=(selfie_flag and not with_prop),
         )
 
     def _face_clause(self):
@@ -1256,7 +1265,8 @@ class AmoImagePlugin(Star):
         except Exception as exc:
             logger.debug("[amo_image] 冻结基准脸失败: %s" % exc)
 
-    async def draw_for(self, umo: str, uid: str = "", prompt: str = "") -> bytes | None:
+    async def draw_for(self, umo: str, uid: str = "", prompt: str = "",
+                       selfie: bool | None = None) -> bytes | None:
         """给别的插件（陪伴）用的公开出图接口：不接事件，直接返回图片字节。
 
         失败/关闭/空提示词一律返回 None，绝不抛异常——调用方按「没画出来」处理即可。
@@ -1278,7 +1288,7 @@ class AmoImagePlugin(Star):
             context_lines = self._clean_context(
                 await self._context_lines(str(umo or ""), str(uid or "")), group
             )
-            final_prompt = self._final_prompt(prompt, context_lines)
+            final_prompt = self._final_prompt(prompt, context_lines, selfie=selfie)
             data = await self._generate(final_prompt)
         except Exception as exc:
             logger.warning("[amo_image] draw_for 失败: %s" % exc)
