@@ -61,7 +61,6 @@ const els = {
   wScenes: $("wScenes"),
   wGender: $("wGender"),
   wNote: $("wNote"),
-  wAdd: $("wAdd"),
   wHint: $("wHint"),
   wList: $("wList"),
   wRefresh: $("wRefresh"),
@@ -346,6 +345,7 @@ let scenes = [];
 let selectedScenes = new Set();
 
 function renderScenes() {
+  if (!els.wScenes) return;
   els.wScenes.innerHTML = scenes.map((scene) =>
     '<button type="button" class="chip' + (selectedScenes.has(scene.key) ? " on" : "") +
     '" data-scene="' + scene.key + '">' + escapeHtml(scene.label) + "</button>").join("");
@@ -418,28 +418,7 @@ async function loadWardrobe() {
   }
 }
 
-els.wAdd.addEventListener("click", async () => {
-  const name = (els.wName.value || "").trim();
-  if (name.length < 2) { els.wHint.textContent = "名字太短"; return; }
-  els.wAdd.disabled = true;
-  els.wHint.textContent = "保存中…";
-  try {
-    const result = unwrap(await post("wardrobe/save", {
-      name,
-      scenes: Array.from(selectedScenes),
-      gender: els.wGender.value,
-      note: els.wNote.value,
-    })) || {};
-    els.wHint.textContent = result.msg || "已保存";
-    els.wName.value = "";
-    els.wNote.value = "";
-    await loadWardrobe();
-  } catch (err) {
-    els.wHint.textContent = "保存失败：" + String(err.message || err);
-  } finally {
-    els.wAdd.disabled = false;
-  }
-});
+/* 添加衣服入口已下线：衣服从市场买 */
 
 els.wRefresh.addEventListener("click", loadWardrobe);
 
