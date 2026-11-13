@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.4（面板合成一个卡）
+
+- 每一页里的多个卡片合成一张，用横线分隔（状态页 1 块、配置页 1 块、人物页 1 块、限制页 1 块），不再一人一个框。
+
 ## 1.8.3（包初始化兼容单测/CI）
 
 - `__init__.py` 改成「先相对导入，失败退回 `from main import …`」：非包方式加载（pytest/CI 直接收集）时不再报 `attempted relative import with no known parent package`。
