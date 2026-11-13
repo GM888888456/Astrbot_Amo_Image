@@ -104,9 +104,24 @@ SELFIE_DIRECTIVE = (
 #: 另外明确禁止抱臂——这是最常见的「看起来就不对」的姿势。
 SELFIE_POSE = (
     "自拍姿势：一只手在画面下方举着手机、手臂自然伸出，手机本身不入镜"
-    "（前置摄像头看不到手机），另一只手可以拿饮料/拎袋子/自然垂放，"
+    "（前置摄像头看不到手机），另一只手自然垂放、轻扶衣角或拎袋子，"
+    "手里不要拿饮料杯、奶茶杯、咖啡杯或食物（提示词没写正在吃喝时）；"
     "身体正对镜头，眼睛看镜头，表情自然；不要双臂环抱，不要抱臂，"
     "不要双手交叉抱胸，不要侧身看别处，不要空手站姿"
+)
+
+#: 只有提示词明确写了在喝/吃，才允许手里拿饮料或食物。
+SELFIE_POSE_WITH_PROP = (
+    "自拍姿势：一只手在画面下方举着手机、手臂自然伸出，手机本身不入镜"
+    "（前置摄像头看不到手机），另一只手拿饮料/食物/拎袋子都自然，"
+    "身体正对镜头，眼睛看镜头，表情自然；不要双臂环抱，不要抱臂，"
+    "不要双手交叉抱胸，不要侧身看别处，不要空手站姿"
+)
+
+#: 提示词没写吃喝时，额外禁止入镜的道具。
+NO_PROP_CLAUSE = (
+    "手里不要拿饮料杯、奶茶杯、咖啡杯、吸管或食物；画面里不要出现杯子、"
+    "奶茶、饮料、餐具（提示词没有写正在吃喝）"
 )
 
 #: 他拍姿势：手机在别人手里，画面里不该出现拍摄者。
@@ -158,8 +173,10 @@ def scene_anchor(place: str, fallback_scene: str = "") -> str:
     return "环境：" + scene + "。" + ENV_LOCK
 
 
-def pose_clause(selfie: bool) -> str:
-    return SELFIE_POSE if selfie else OTHER_POSE
+def pose_clause(selfie: bool, with_prop: bool = False) -> str:
+    if not selfie:
+        return OTHER_POSE
+    return SELFIE_POSE_WITH_PROP if with_prop else SELFIE_POSE
 
 
 def split_prompts(text: str, limit: int = 4) -> list[str]:

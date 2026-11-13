@@ -67,6 +67,7 @@ try:
         FACE_LOCK,
         POSE_NEGATIVE,
         SELFIE_DIRECTIVE,
+        NO_PROP_CLAUSE,
         pose_clause,
         match_scene,
         scene_anchor,
@@ -78,6 +79,7 @@ except Exception:  # pragma: no cover - 直接以脚本方式加载时
         FACE_LOCK,
         POSE_NEGATIVE,
         SELFIE_DIRECTIVE,
+        NO_PROP_CLAUSE,
         pose_clause,
         match_scene,
         scene_anchor,
@@ -90,7 +92,7 @@ except Exception:  # pragma: no cover
     from link import probe as _link_probe, summary as _link_summary  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.7.7"
+PLUGIN_VERSION = "1.7.8"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -277,6 +279,7 @@ def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "
                  place: str = "", activity: str = "", gender: str = "",
                  persona: str = "", camera: str = "", scene: str = "",
                  pose: str = "", face: str = "", selfie: bool = False,
+                 no_prop: bool = False,
                  look_label: str = "今天的样子：") -> str:
     """拼最终提示词：性别 → 角色 → 外观 → 今日固定造型 → 地点/在干嘛 → 要求 → 上下文。
 
@@ -323,6 +326,8 @@ def build_prompt(appearance: str, prompt: str, context_lines=None, look: str = "
         parts.append(str(scene).strip())
     if str(pose or "").strip():
         parts.append(str(pose).strip())
+    if no_prop:
+        parts.append(NO_PROP_CLAUSE)
     if str(appearance or "").strip() or str(look or "").strip():
         parts.append("同一个人，脸、发型、服装保持一致，不要换成别的装扮")
     return "，".join(parts)
@@ -679,7 +684,7 @@ class AmoImagePlugin(Star):
             return value
         return pool[int(time.time()) % len(pool)]
 
-    def _negative(self) -> str:
+    def _negative(self, prompt: str = "") -> str:
         """负面词 = 用户配置 + 一致性 + 姿势。
 
         后两段是硬约束，不放进配置项里让人误删：换脸、换背景、手机入镜、抱臂
@@ -690,7 +695,11 @@ class AmoImagePlugin(Star):
             value = DEFAULT_NEGATIVE_PROMPT
         base = str(value).strip()
         items: list[str] = []
-        for chunk in [base, CONSISTENCY_NEGATIVE, POSE_NEGATIVE]:
+        chunks = [base, CONSISTENCY_NEGATIVE, POSE_NEGATIVE]
+        if prompt and not self._has_food_prop(prompt):
+            chunks.append("cup, glass, drink, milk tea, coffee cup, food, "
+                          "holding cup, straw, 杯子, 奶茶杯, 饮料杯, 食物, 吸管, 餐具")
+        for chunk in chunks:
             for item in str(chunk or "").split(","):
                 item = item.strip()
                 if item and item.lower() not in {x.lower() for x in items}:
@@ -813,18 +822,18 @@ class AmoImagePlugin(Star):
         """按配置挑后端（openai / openai_chat / gemini / custom）。"""
         return build_provider(self)
 
-    def _options(self):
+    def _options(self, prompt: str = ""):
         return ImageOptions(
             size=self._cfg("size", "1024x1024"),
             n=self._int("n", 1),
             quality=str(self._cfg("quality", "") or ""),
             style=str(self._cfg("style", "") or ""),
-            negative=self._negative(),
+            negative=self._negative(prompt),
             aspect_ratio=str(self._cfg("aspect_ratio", "") or ""),
         )
 
     async def _generate(self, prompt: str) -> bytes:
-        return await self._provider().generate(prompt, self._options())
+        return await self._provider().generate(prompt, self._options(prompt))
 
     # ---------- 一致性：同一个人、同一天同一套造型、同一个地点 ----------
 
@@ -1144,11 +1153,19 @@ class AmoImagePlugin(Star):
             logger.debug("[amo_image] 记录环境失败: %s" % exc)
         return scene
 
+    FOOD_PROP_WORDS = ("喝", "奶茶", "咖啡", "饮料", "水", "吃", "饭", "面",
+                       "鱼", "外卖", "蛋糕", "火锅", "杯", "零食")
+
+    def _has_food_prop(self, prompt) -> bool:
+        text = str(prompt or "")
+        return any(word in text for word in self.FOOD_PROP_WORDS)
+
     def _final_prompt(self, prompt, context_lines=None):
         scheduled = self._scheduled_outfit()
         place = self._scene_place()
         scene = self._remember_scene(place)
         selfie = self._is_selfie(prompt)
+        with_prop = self._has_food_prop(prompt)
         return build_prompt(
             self._appearance(),
             prompt,
@@ -1161,9 +1178,10 @@ class AmoImagePlugin(Star):
             persona=self._persona(),
             camera=self._camera(prompt),
             scene=scene_anchor(place, scene),
-            pose=pose_clause(selfie),
+            pose=pose_clause(selfie, with_prop=with_prop),
             face=self._face_clause(),
             selfie=selfie,
+            no_prop=(selfie and not with_prop),
         )
 
     def _face_clause(self):

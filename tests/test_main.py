@@ -897,6 +897,28 @@ def test_camera_mode_override():
     assert q._camera("自拍一张") == main.OTHER_CAMERA
 
 
+def test_selfie_without_food_has_no_drink_prop():
+    p = make_plugin(character_outfits=["JK 制服"])
+    p._companion = lambda: FakeCompanion(place="商场")
+    text = p._final_prompt("自拍")
+    assert "手里不要拿饮料杯" in text
+    assert "画面里不要出现杯子" in text
+
+
+def test_selfie_with_milk_tea_allows_drink_prop():
+    p = make_plugin(character_outfits=["JK 制服"])
+    p._companion = lambda: FakeCompanion(place="商场")
+    text = p._final_prompt("自拍，喝奶茶")
+    assert "另一只手拿饮料/食物" in text
+    assert "画面里不要出现杯子" not in text
+
+
+def test_negative_adds_no_drink_when_prompt_has_none():
+    p = make_plugin()
+    assert "milk tea" in p._negative("自拍")
+    assert "milk tea" not in p._negative("自拍，喝奶茶")
+
+
 def test_final_prompt_carries_camera_angle():
     p = make_plugin(character_outfits=["JK 制服"])
     p._companion = lambda: FakeCompanion(place="家")
