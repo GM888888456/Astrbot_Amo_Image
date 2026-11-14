@@ -92,7 +92,7 @@ except Exception:  # pragma: no cover
     from link import probe as _link_probe  # type: ignore
 
 PLUGIN_NAME = "Astrbot_Amo_Image"
-PLUGIN_VERSION = "1.8.7"
+PLUGIN_VERSION = "1.8.8"
 try:  # 版本号以 metadata.yaml 为准，避免两处不一致
     import yaml as _amo_meta_yaml
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "metadata.yaml"),
@@ -1316,6 +1316,7 @@ class AmoImagePlugin(Star):
             # 主动分享算群额度，但不占用户的下一次冷却
             self._mark_call(str(uid or ""), str(umo or ""), group, cooldown=False)
             self._record(uid or "share", prompt, True, 0, len(data))
+            self._record_memory(prompt, final_prompt)
             self._freeze_face()
         return data or None
 
@@ -1784,6 +1785,19 @@ class AmoImagePlugin(Star):
         except Exception:
             pass
 
+    def _record_memory(self, prompt, detail=""):
+        """把「画了一张图」写进记忆库的记录页；找不到终端/记忆就静默跳过。"""
+        companion = self._companion()
+        record = getattr(companion, "_record", None)
+        if not callable(record):
+            return
+        try:
+            text = str(prompt or "").strip()
+            title = "画了一张图" + ("：" + text[:40] if text else "")
+            record("draw", title, str(detail or text)[:300], "", 0)
+        except Exception as exc:
+            logger.debug("[amo_image] 写记忆记录失败: %s" % exc)
+
     # ---------- 发送 ----------
 
     def _result(self, event, data: bytes, prefix: str = ""):
@@ -1894,6 +1908,7 @@ class AmoImagePlugin(Star):
         # 只有真的拿到图才扣额度、占冷却：失败不该让她今天少画一张
         self._mark_call(uid, umo, group)
         self._record(uid, prompt, True, int((time.time() - started) * 1000), len(data))
+        self._record_memory(prompt, final_prompt)
         self._freeze_face()
         yield self._result(event, data, str(self._cfg("reply_prefix", "") or ""))
 
@@ -1924,7 +1939,8 @@ class AmoImagePlugin(Star):
                 continue
             started = time.time()
             try:
-                data = await self._generate(self._final_prompt(item, ctx))
+                final = self._final_prompt(item, ctx)
+                data = await self._generate(final)
             except Exception as exc:
                 logger.warning("[amo_image] 批量生图失败: %s" % exc)
                 self._record(uid, item, False, int((time.time() - started) * 1000), 0)
@@ -1933,6 +1949,7 @@ class AmoImagePlugin(Star):
                 self._record(uid, item, False, int((time.time() - started) * 1000), 0)
                 continue
             self._record(uid, item, True, int((time.time() - started) * 1000), len(data))
+            self._record_memory(item, final)
             self._freeze_face()
             images.append(data)
 
