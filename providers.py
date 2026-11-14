@@ -110,11 +110,6 @@ def _walk_candidates(node, depth=0):
         return
     if not isinstance(node, dict):
         return
-    inline = None
-    for key in ("inlineData", "inline_data"):
-        if isinstance(node.get(key), dict):
-            inline = node[key]
-            break
     is_inline = bool(
         isinstance(node.get("data"), str)
         and ("mimeType" in node or "mime_type" in node)

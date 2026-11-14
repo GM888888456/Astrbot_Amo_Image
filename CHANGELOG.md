@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.6（清理死代码）
+
+- 删掉 `link.summary` 未用别名（`_link_summary` 从没被调用）。
+- `providers.py` 里探测 `inlineData` 那一段是死循环（判定只看 `data`），删掉。
+- `parse_image_response` / `ratio_from_size` **保留**：测试要按 `main.<名字>` 取，删了会红 12 条。
+
+
 ## 1.8.5（面板：删掉「添加衣服」）
 
 - 服装页不再让用户手填衣服；衣服/首饰改为从市场买（买了直接进对应槽位）。
